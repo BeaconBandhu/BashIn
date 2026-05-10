@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 
-const API = "http://localhost:8000";
+const API = "https://bashin-production.up.railway.app";
 
 export function useProjects() {
   const [projects, setProjects] = useState([]);
