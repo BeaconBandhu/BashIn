@@ -439,9 +439,31 @@ tailwind.config = {
       An AI overlay that watches your screen, listens to your voice, learns your patterns — and builds a knowledge graph that trains a model specifically for you.
     </p>
 
-    <div class="reveal" style="display:flex;flex-wrap:wrap;gap:14px;justify-content:center;margin-bottom:48px;transition-delay:0.3s;">
-      <button style="background:linear-gradient(135deg,#7c3aed,#818CF8);padding:14px 32px;border-radius:14px;font-weight:700;font-size:0.95rem;box-shadow:0 4px 24px rgba(124,58,237,0.35);transition:transform 0.2s,box-shadow 0.2s;" onmouseover="this.style.transform='scale(1.04)';this.style.boxShadow='0 8px 40px rgba(124,58,237,0.5)'" onmouseout="this.style.transform='scale(1)';this.style.boxShadow='0 4px 24px rgba(124,58,237,0.35)'">Get Early Access →</button>
-      <button onclick="document.getElementById('demo').scrollIntoView({behavior:'smooth'})" style="padding:14px 32px;border-radius:14px;font-weight:600;font-size:0.95rem;border:1px solid rgba(124,58,237,0.35);background:rgba(124,58,237,0.07);backdrop-filter:blur(8px);transition:border-color 0.2s,background 0.2s;" onmouseover="this.style.borderColor='rgba(124,58,237,0.6)';this.style.background='rgba(124,58,237,0.12)'" onmouseout="this.style.borderColor='rgba(124,58,237,0.35)';this.style.background='rgba(124,58,237,0.07)'">Watch Demo ↓</button>
+    <div class="reveal" id="hero-cta" style="display:flex;flex-wrap:wrap;gap:14px;justify-content:center;align-items:center;margin-bottom:48px;transition-delay:0.3s;">
+
+      <!-- Expandable access row -->
+      <div id="access-pill" style="display:flex;align-items:center;background:linear-gradient(135deg,#7c3aed,#818CF8);border-radius:14px;box-shadow:0 4px 24px rgba(124,58,237,0.35);overflow:hidden;transition:box-shadow 0.3s;">
+        <!-- Get Early Access btn -->
+        <button id="access-btn" onclick="openHeroEmail()" style="padding:14px 28px;font-weight:700;font-size:0.95rem;background:transparent;white-space:nowrap;transition:padding 0.4s;">Get Early Access →</button>
+        <!-- Sliding email area -->
+        <div id="hero-email-wrap" style="max-width:0;overflow:hidden;transition:max-width 0.5s cubic-bezier(0.22,1,0.36,1),opacity 0.4s;opacity:0;display:flex;align-items:center;gap:0;">
+          <div style="width:1px;height:24px;background:rgba(255,255,255,0.2);flex-shrink:0;"></div>
+          <input id="hero-email-input" type="email" placeholder="name@domain.com"
+            style="background:transparent;border:none;padding:14px 16px;font-size:0.9rem;color:#f1f5f9;width:220px;outline:none;flex-shrink:0;"
+            onkeydown="if(event.key==='Enter')submitHeroEmail()"
+          />
+          <button onclick="submitHeroEmail()" id="hero-send-btn"
+            style="padding:10px 18px;margin-right:6px;border-radius:10px;background:rgba(255,255,255,0.15);font-weight:700;font-size:0.85rem;white-space:nowrap;transition:background 0.2s;flex-shrink:0;"
+            onmouseover="this.style.background='rgba(255,255,255,0.25)'" onmouseout="this.style.background='rgba(255,255,255,0.15)'">Join →</button>
+        </div>
+      </div>
+
+      <!-- Watch Demo -->
+      <button id="demo-btn" onclick="document.getElementById('demo').scrollIntoView({behavior:'smooth'})"
+        style="padding:14px 32px;border-radius:14px;font-weight:600;font-size:0.95rem;border:1px solid rgba(124,58,237,0.35);background:rgba(124,58,237,0.07);backdrop-filter:blur(8px);transition:border-color 0.3s,background 0.3s,transform 0.4s,opacity 0.3s;white-space:nowrap;"
+        onmouseover="this.style.borderColor='rgba(124,58,237,0.6)';this.style.background='rgba(124,58,237,0.12)'"
+        onmouseout="this.style.borderColor='rgba(124,58,237,0.35)';this.style.background='rgba(124,58,237,0.07)'"
+      >Watch Demo ↓</button>
     </div>
 
     <div class="reveal" style="display:flex;flex-wrap:wrap;gap:10px;justify-content:center;transition-delay:0.4s;">
@@ -1344,6 +1366,61 @@ document.getElementById('waitlist-form').addEventListener('submit', async e => {
     }, 3000);
   }
 });
+
+// ── HERO INLINE EMAIL ─────────────────────────────────────────────────────
+let heroEmailOpen = false;
+function openHeroEmail() {
+  if (heroEmailOpen) return;
+  heroEmailOpen = true;
+
+  const wrap    = document.getElementById('hero-email-wrap');
+  const pill    = document.getElementById('access-pill');
+  const demoBtn = document.getElementById('demo-btn');
+  const btn     = document.getElementById('access-btn');
+
+  // expand pill to reveal input
+  wrap.style.maxWidth = '340px';
+  wrap.style.opacity  = '1';
+  btn.style.padding   = '14px 16px';
+  pill.style.boxShadow = '0 0 0 2px rgba(216,180,254,0.5), 0 4px 32px rgba(124,58,237,0.5)';
+
+  // slide demo button right
+  demoBtn.style.transform = 'translateX(8px)';
+
+  // focus input after transition
+  setTimeout(() => document.getElementById('hero-email-input').focus(), 520);
+}
+
+async function submitHeroEmail() {
+  const input   = document.getElementById('hero-email-input');
+  const sendBtn = document.getElementById('hero-send-btn');
+  const email   = input.value.trim();
+  if (!email || !email.includes('@')) { input.style.outline='1px solid #ef4444'; setTimeout(()=>input.style.outline='none',1200); return; }
+
+  sendBtn.textContent = '…';
+  sendBtn.disabled    = true;
+
+  try {
+    const body = new FormData();
+    body.append('email', email);
+    const res  = await fetch('/api/waitlist', { method: 'POST', body });
+    const data = await res.json();
+
+    if (data.status === 'already_registered') {
+      sendBtn.textContent     = '✓ Already in!';
+      sendBtn.style.background = 'rgba(14,165,233,0.3)';
+    } else {
+      sendBtn.textContent     = '✓ You\'re in!';
+      sendBtn.style.background = 'rgba(16,185,129,0.3)';
+      confetti();
+    }
+    input.disabled = true;
+  } catch {
+    sendBtn.textContent  = 'Retry';
+    sendBtn.disabled     = false;
+    sendBtn.style.background = 'rgba(239,68,68,0.3)';
+  }
+}
 
 function confetti() {
   for (let i = 0; i < 48; i++) {
