@@ -9,7 +9,9 @@ from typing import Dict, List, Optional, Tuple
 
 from fastapi import FastAPI, Form, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import Response
+from fastapi.responses import Response, StreamingResponse
+import io
+import openpyxl
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -350,6 +352,52 @@ async def export_project(project_id: str):
         content=md,
         media_type="text/markdown",
         headers={"Content-Disposition": f'attachment; filename="{safe_name}_knowledge.md"'},
+    )
+
+
+# ── waitlist ──────────────────────────────────────────────────────────────────
+
+@app.post("/waitlist")
+async def join_waitlist(email: str = Form(...)):
+    email = email.strip().lower()
+    if not mongo_ok:
+        raise HTTPException(status_code=503, detail="Database unavailable")
+    db = get_db()
+    try:
+        await db.waitlist.insert_one({
+            "email": email,
+            "joined_at": datetime.utcnow().isoformat(),
+        })
+    except Exception:
+        # duplicate key — already signed up
+        return {"status": "already_registered"}
+    return {"status": "ok"}
+
+
+@app.get("/waitlist/export")
+async def export_waitlist():
+    """Download all waitlist emails as an Excel file."""
+    if not mongo_ok:
+        raise HTTPException(status_code=503, detail="Database unavailable")
+    db = get_db()
+    entries = await db.waitlist.find({}, {"_id": 0}).to_list(length=None)
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Waitlist"
+    ws.column_dimensions["A"].width = 36
+    ws.column_dimensions["B"].width = 24
+    ws.append(["Email", "Joined At"])
+    for e in entries:
+        ws.append([e.get("email", ""), e.get("joined_at", "")])
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": "attachment; filename=bashin_waitlist.xlsx"},
     )
 
 

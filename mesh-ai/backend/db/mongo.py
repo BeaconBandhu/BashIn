@@ -17,6 +17,7 @@ async def connect() -> AsyncIOMotorDatabase:
     await _db.nodes.create_index([("project_id", 1)])
     await _db.nodes.create_index([("id", 1)], unique=True)
     await _db.edges.create_index([("project_id", 1)])
+    await _db.waitlist.create_index([("email", 1)], unique=True)
     print(f"[MongoDB] Connected → {db_name}")
     return _db
 

@@ -1309,12 +1309,43 @@ const rmObs = new IntersectionObserver(entries => {
 }, { threshold: 0.2 });
 rmObs.observe(document.getElementById('roadmap-wrap'));
 
-// ── WAITLIST CONFETTI ────────────────────────────────────────────────────
-document.getElementById('waitlist-form').addEventListener('submit', e => {
+// ── WAITLIST SUBMIT ───────────────────────────────────────────────────────
+document.getElementById('waitlist-form').addEventListener('submit', async e => {
   e.preventDefault();
-  const btn = e.target.querySelector('button');
-  btn.textContent = '✓ Welcome Aboard!';
-  btn.style.background = 'linear-gradient(135deg,#059669,#10b981)';
+  const form  = e.target;
+  const input = form.querySelector('input[type=email]');
+  const btn   = form.querySelector('button');
+  const email = input.value.trim();
+
+  btn.textContent = 'Submitting…';
+  btn.disabled = true;
+
+  try {
+    const body = new FormData();
+    body.append('email', email);
+    const res  = await fetch('/api/waitlist', { method: 'POST', body });
+    const data = await res.json();
+
+    if (data.status === 'already_registered') {
+      btn.textContent = '✓ Already on the list!';
+      btn.style.background = 'linear-gradient(135deg,#0ea5e9,#38bdf8)';
+    } else {
+      btn.textContent = '✓ Welcome Aboard!';
+      btn.style.background = 'linear-gradient(135deg,#059669,#10b981)';
+      confetti();
+    }
+  } catch {
+    btn.textContent = 'Try again';
+    btn.disabled = false;
+    btn.style.background = 'linear-gradient(135deg,#dc2626,#ef4444)';
+    setTimeout(() => {
+      btn.textContent = 'Join Beta →';
+      btn.style.background = 'linear-gradient(135deg,#7c3aed,#818CF8)';
+    }, 3000);
+  }
+});
+
+function confetti() {
   for (let i = 0; i < 48; i++) {
     const p = document.createElement('div');
     const colors = ['#7c3aed','#818CF8','#D8B4FE','#f59e0b','#10b981','#f1f5f9'];
@@ -1326,7 +1357,7 @@ document.getElementById('waitlist-form').addEventListener('submit', e => {
       {transform:`translate(calc(-50% + ${Math.cos(a)*d}px), calc(-50% + ${Math.sin(a)*d}px)) scale(0)`, opacity:0}
     ], {duration:900+Math.random()*600, easing:'ease-out'}).onfinish = () => p.remove();
   }
-});
+}
 </script>
 </body>
 </html>
