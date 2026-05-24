@@ -1,4 +1,5 @@
 import { useState, useCallback } from "react";
+import { Analytics } from "@vercel/analytics/react";
 import SphereGraph  from "./components/SphereGraph";
 import NodePanel    from "./components/NodePanel";
 import FilterPanel  from "./components/FilterPanel";
@@ -200,6 +201,7 @@ export default function App() {
           onClose={() => setShowIngest(false)}
         />
       )}
+      <Analytics />
     </div>
   );
 }
