@@ -1,0 +1,1332 @@
+<!DOCTYPE html>
+<html class="dark" lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>BashIn | Your Intelligent Buddy</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=Fira+Code:wght@400;500&display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+tailwind.config = {
+  darkMode: "class",
+  theme: {
+    extend: {
+      colors: {
+        "violet": "#7c3aed", "violet-light": "#8b5cf6", "violet-dim": "#4c1d95",
+        "blue-accent": "#2563eb", "indigo": "#818CF8", "glow": "#D8B4FE",
+        "surface": "#05050a", "surface-2": "#0d0d1a", "surface-3": "#12121f",
+        "glass": "rgba(13,13,26,0.7)", "border-dim": "rgba(124,58,237,0.2)",
+        "text-1": "#f1f5f9", "text-2": "#94a3b8", "text-3": "#64748b"
+      }
+    }
+  }
+}
+</script>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --violet: #7c3aed; --violet-l: #8b5cf6; --indigo: #818CF8;
+    --glow: #D8B4FE; --surface: #05050a;
+  }
+  html { scroll-behavior: smooth; }
+  body { background: var(--surface); color: #f1f5f9; font-family: 'Inter', sans-serif; overflow-x: hidden; }
+  html, body, *, *::before, *::after {
+    cursor: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='1' height='1'/>") 0 0, none !important;
+  }
+
+  /* ── CUSTOM CURSOR OVERLAY ── */
+  #cursor-wrap { position: fixed; top: 0; left: 0; pointer-events: none; z-index: 9998; }
+  #c-dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: #f1f5f9; position: absolute;
+    transform: translate(-50%,-50%);
+    box-shadow: 0 0 6px rgba(255,255,255,0.8);
+  }
+  #c-ring {
+    width: 36px; height: 36px; border-radius: 50%;
+    border: 1.5px solid rgba(216,180,254,0.5);
+    position: absolute; transform: translate(-50%,-50%);
+    transition: width 0.35s cubic-bezier(0.23,1,0.32,1), height 0.35s cubic-bezier(0.23,1,0.32,1),
+                border-color 0.3s, box-shadow 0.3s;
+  }
+  #c-label {
+    position: absolute; left: 24px; top: -8px;
+    font-family: 'Fira Code', monospace; font-size: 9px; letter-spacing: 0.1em;
+    color: var(--indigo); white-space: nowrap; opacity: 0;
+    transition: opacity 0.25s; pointer-events: none;
+    text-shadow: 0 0 8px rgba(129,140,248,0.8);
+  }
+  .orbit-ring { position: absolute; transform: translate(-50%,-50%); pointer-events: none; }
+  .orbit-dot {
+    width: 5px; height: 5px; background: var(--violet-l); border-radius: 50%;
+    position: absolute; top: 50%; left: 50%;
+    box-shadow: 0 0 6px var(--violet-l);
+  }
+  .sonar-ring {
+    position: absolute; transform: translate(-50%,-50%);
+    border-radius: 50%; border: 1.5px solid rgba(239,68,68,0.6);
+    animation: sonarPulse 1.8s ease-out infinite; pointer-events: none;
+  }
+  .sonar-ring:nth-child(2) { animation-delay: 0.6s; }
+  .sonar-ring:nth-child(3) { animation-delay: 1.2s; }
+  @keyframes sonarPulse {
+    0%   { width: 36px; height: 36px; opacity: 0.8; }
+    100% { width: 90px; height: 90px; opacity: 0; }
+  }
+  .scan-beam {
+    position: absolute; transform: translate(-50%,-50%);
+    width: 36px; height: 36px; border-radius: 50%;
+    pointer-events: none; overflow: hidden;
+  }
+  .scan-beam::after {
+    content: ''; position: absolute; top: 50%; left: 50%;
+    width: 20px; height: 1.5px; background: rgba(251,191,36,0.9);
+    transform-origin: 0 50%; transform: rotate(0deg) translate(0,-50%);
+    animation: scanRotate 1.2s linear infinite;
+    box-shadow: 0 0 6px rgba(251,191,36,0.9);
+  }
+  @keyframes scanRotate { to { transform: rotate(360deg) translate(0,-50%); } }
+
+  /* ── ROADMAP ── */
+  .rtab {
+    padding: 9px 20px; border-radius: 100px; font-size: 0.82rem; font-weight: 600;
+    border: 1.5px solid rgba(255,255,255,0.08); background: transparent;
+    color: #64748b; transition: all 0.25s; letter-spacing: 0.01em;
+  }
+  .rtab:hover { color: #f1f5f9; border-color: rgba(255,255,255,0.18); }
+  .rtab.active { background: rgba(255,255,255,0.06); color: var(--tc); border-color: var(--tc); box-shadow: 0 0 18px -4px var(--tc); }
+
+  .rm-track { display: flex; flex-direction: column; gap: 0; position: relative; }
+  .rm-track::before {
+    content: ''; position: absolute; left: 31px; top: 32px; width: 2px;
+    background: rgba(255,255,255,0.06); bottom: 32px; border-radius: 2px;
+  }
+  .rm-fill {
+    position: absolute; left: 31px; top: 32px; width: 2px;
+    background: linear-gradient(180deg, var(--rc), transparent);
+    border-radius: 2px; height: 0%; transition: height 0.6s cubic-bezier(0.22,1,0.36,1);
+  }
+  .rm-node { display: flex; gap: 24px; align-items: flex-start; padding: 0 0 40px 0; position: relative; opacity: 0; transform: translateX(-16px); transition: opacity 0.5s, transform 0.5s; }
+  .rm-node.lit { opacity: 1; transform: none; }
+  .rm-dot-wrap { flex-shrink: 0; width: 64px; display: flex; flex-direction: column; align-items: center; gap: 6px; padding-top: 4px; }
+  .rm-dot {
+    width: 18px; height: 18px; border-radius: 50%; border: 2px solid rgba(255,255,255,0.12);
+    background: #0d0d1a; transition: background 0.4s, border-color 0.4s, box-shadow 0.4s;
+    position: relative; z-index: 1;
+  }
+  .rm-node.lit .rm-dot { background: var(--rc); border-color: var(--rc); box-shadow: 0 0 16px var(--rc); }
+  .rm-day { font-family: 'Fira Code', monospace; font-size: 9px; letter-spacing: 0.12em; color: #334155; transition: color 0.4s; white-space: nowrap; }
+  .rm-node.lit .rm-day { color: var(--rc); }
+  .rm-card {
+    flex: 1; background: rgba(13,13,26,0.6); border: 1px solid rgba(255,255,255,0.06);
+    border-radius: 16px; padding: 18px 20px; transition: border-color 0.4s, box-shadow 0.4s;
+  }
+  .rm-node.lit .rm-card { border-color: rgba(255,255,255,0.1); box-shadow: 0 4px 24px rgba(0,0,0,0.3); }
+  .rm-card-top { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+  .rm-badge { font-size: 0.7rem; font-weight: 700; padding: 2px 10px; border-radius: 100px; letter-spacing: 0.08em; background: rgba(255,255,255,0.05); color: #64748b; transition: background 0.4s, color 0.4s; }
+  .rm-node.lit .rm-badge { background: color-mix(in srgb, var(--rc) 15%, transparent); color: var(--rc); }
+  .rm-title { font-size: 0.95rem; font-weight: 700; color: #f1f5f9; }
+  .rm-desc { font-size: 0.82rem; color: #64748b; line-height: 1.6; margin-top: 4px; }
+  .rm-node.lit .rm-desc { color: #94a3b8; }
+  .rm-activity {
+    margin-top: 12px; padding: 10px 14px; border-radius: 10px;
+    background: rgba(255,255,255,0.03); border-left: 2px solid rgba(255,255,255,0.06);
+    font-family: 'Fira Code', monospace; font-size: 0.75rem; color: #334155;
+    transition: border-color 0.4s, color 0.4s;
+  }
+  .rm-node.lit .rm-activity { border-color: var(--rc); color: #94a3b8; }
+
+  @keyframes rmPulse { 0%,100%{box-shadow:0 0 16px var(--rc)} 50%{box-shadow:0 0 32px var(--rc), 0 0 48px color-mix(in srgb,var(--rc) 40%,transparent)} }
+  .rm-node.lit.current .rm-dot { animation: rmPulse 1.8s ease-in-out infinite; }
+
+  /* ── SCROLL PROGRESS ── */
+  #scroll-bar { position: fixed; top: 0; left: 0; height: 2px; background: linear-gradient(90deg, #7c3aed, #818CF8, #D8B4FE); z-index: 9999; width: 0%; transition: width 0.1s; pointer-events: none; }
+
+
+  /* ── STARS ── */
+  .star { position: absolute; background: white; border-radius: 50%; animation: twinkle var(--d) ease-in-out infinite; }
+  @keyframes twinkle { 0%,100%{opacity:0.2;transform:scale(1)} 50%{opacity:0.9;transform:scale(1.3)} }
+
+  /* ── AURORA ── */
+  .aurora { filter: blur(80px); opacity: 0.35; animation: drift var(--d,15s) ease-in-out infinite alternate; position: absolute; border-radius: 60%; }
+  @keyframes drift { from{transform:translate(-8%,-8%) scale(1)} to{transform:translate(8%,8%) scale(1.05)} }
+
+  /* ── GLASS CARD ── */
+  .glass { background: rgba(13,13,26,0.65); backdrop-filter: blur(16px); border: 1px solid rgba(255,255,255,0.06); }
+  .glass-hover { transition: transform 0.3s, border-color 0.3s, box-shadow 0.3s; }
+  .glass-hover:hover { transform: translateY(-4px); border-color: rgba(124,58,237,0.4); box-shadow: 0 8px 40px rgba(124,58,237,0.15); }
+
+  /* ── REVEAL ── */
+  .reveal { opacity: 0; transform: translateY(28px); transition: opacity 0.85s cubic-bezier(0.22,1,0.36,1), transform 0.85s cubic-bezier(0.22,1,0.36,1); }
+  .reveal.in { opacity: 1; transform: none; }
+  .reveal-left { opacity:0; transform:translateX(-40px); transition: opacity 0.85s cubic-bezier(0.22,1,0.36,1), transform 0.85s cubic-bezier(0.22,1,0.36,1); }
+  .reveal-left.in { opacity:1; transform:none; }
+  .reveal-right { opacity:0; transform:translateX(40px); transition: opacity 0.85s cubic-bezier(0.22,1,0.36,1), transform 0.85s cubic-bezier(0.22,1,0.36,1); }
+  .reveal-right.in { opacity:1; transform:none; }
+
+  /* ── MARQUEE ── */
+  .marquee-wrap { overflow: hidden; user-select: none; display: flex; gap: 2rem; }
+  .marquee-track { flex-shrink: 0; min-width: 100%; display: flex; gap: 2rem; animation: marquee 22s linear infinite; }
+  @keyframes marquee { from{transform:translateX(0)} to{transform:translateX(-100%)} }
+
+  /* ── HOVER DEMO SECTION ── */
+  .demo-zone {
+    position: relative; border-radius: 24px; overflow: hidden;
+    border: 1px solid rgba(124,58,237,0.2);
+    background: rgba(13,13,26,0.8);
+    transition: border-color 0.4s, box-shadow 0.4s;
+    min-height: 280px; display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 1.5rem; padding: 2.5rem;
+  }
+  .demo-zone:hover { border-color: rgba(124,58,237,0.6); box-shadow: 0 0 40px rgba(124,58,237,0.12); }
+  .demo-zone .hover-invite {
+    font-family: 'Fira Code', monospace; font-size: 11px; letter-spacing: 0.2em;
+    color: rgba(216,180,254,0.5); text-transform: uppercase;
+    border: 1px solid rgba(216,180,254,0.2); padding: 4px 12px; border-radius: 20px;
+    transition: opacity 0.3s;
+  }
+  .demo-zone:hover .hover-invite { opacity: 0; }
+  .demo-zone-title { font-size: 1.1rem; font-weight: 600; color: #f1f5f9; }
+  .demo-zone-desc { font-size: 0.85rem; color: #94a3b8; text-align: center; max-width: 200px; line-height: 1.5; }
+
+  /* cursor preview inside demo zone */
+  .cursor-preview {
+    width: 80px; height: 80px; position: relative;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .cp-dot {
+    width: 10px; height: 10px; background: #f1f5f9; border-radius: 50%;
+    box-shadow: 0 0 8px rgba(255,255,255,0.8); position: relative; z-index: 2;
+    transition: background 0.3s, box-shadow 0.3s;
+  }
+  .cp-ring {
+    position: absolute; width: 36px; height: 36px; border-radius: 50%;
+    border: 1.5px solid rgba(216,180,254,0.5);
+    transition: all 0.4s cubic-bezier(0.23,1,0.32,1);
+  }
+  /* AI mode ring */
+  .demo-zone[data-mode="ai"]:hover .cp-ring {
+    width: 52px; height: 52px;
+    border-color: var(--indigo);
+    box-shadow: 0 0 0 2px rgba(129,140,248,0.15), 0 0 20px rgba(129,140,248,0.3);
+  }
+  .demo-zone[data-mode="ai"]:hover .cp-dot { background: var(--indigo); box-shadow: 0 0 10px rgba(129,140,248,0.9); }
+
+  /* orbit dots inside preview */
+  .cp-orbit {
+    position: absolute; width: 64px; height: 64px;
+    border-radius: 50%; opacity: 0;
+    transition: opacity 0.4s;
+  }
+  .demo-zone[data-mode="ai"]:hover .cp-orbit { opacity: 1; animation: orbitSpin 1.4s linear infinite; }
+  .cp-orbit-dot {
+    position: absolute; width: 5px; height: 5px; background: var(--violet-l);
+    border-radius: 50%; box-shadow: 0 0 6px var(--violet-l);
+    top: -2.5px; left: 50%; transform: translateX(-50%);
+  }
+  .cp-orbit-dot:nth-child(2) { top: 50%; left: -2.5px; transform: translateY(-50%); }
+  .cp-orbit-dot:nth-child(3) { top: 100%; left: 50%; transform: translateX(-50%) translateY(-100%); }
+  @keyframes orbitSpin { to { transform: rotate(360deg); } }
+
+  /* AI label */
+  .cp-ai-label {
+    position: absolute; right: -48px; top: 50%; transform: translateY(-50%);
+    font-family: 'Fira Code', monospace; font-size: 9px; color: var(--indigo);
+    opacity: 0; white-space: nowrap; letter-spacing: 0.1em;
+    text-shadow: 0 0 8px rgba(129,140,248,0.8);
+    transition: opacity 0.4s 0.2s;
+  }
+  .demo-zone[data-mode="ai"]:hover .cp-ai-label { opacity: 1; }
+
+  /* listen mode */
+  .demo-zone[data-mode="listen"]:hover .cp-ring {
+    width: 36px; height: 36px; border-color: rgba(239,68,68,0.7);
+    animation: listenRingPulse 1.2s ease-in-out infinite;
+  }
+  .demo-zone[data-mode="listen"]:hover .cp-dot { background: #ef4444; box-shadow: 0 0 8px rgba(239,68,68,0.9); }
+  @keyframes listenRingPulse { 0%,100%{box-shadow:0 0 0 0 rgba(239,68,68,0.4)} 50%{box-shadow:0 0 0 8px rgba(239,68,68,0)} }
+
+  /* sonar rings in preview */
+  .cp-sonar { position: absolute; opacity: 0; transition: opacity 0.3s; }
+  .demo-zone[data-mode="listen"]:hover .cp-sonar { opacity: 1; }
+  .cp-sonar span {
+    position: absolute; border-radius: 50%;
+    border: 1px solid rgba(239,68,68,0.5);
+    transform: translate(-50%,-50%);
+    animation: cpSonar 1.8s ease-out infinite;
+  }
+  .cp-sonar span:nth-child(2) { animation-delay: 0.6s; }
+  .cp-sonar span:nth-child(3) { animation-delay: 1.2s; }
+  @keyframes cpSonar {
+    0%   { width: 36px; height: 36px; opacity: 0.7; }
+    100% { width: 80px; height: 80px; opacity: 0; }
+  }
+
+  /* waveform bars */
+  .wave-bars { display: flex; align-items: center; gap: 3px; height: 36px; }
+  .wave-bar {
+    width: 3px; background: linear-gradient(180deg, #ef4444, rgba(239,68,68,0.3));
+    border-radius: 3px; transition: height 0.15s ease;
+    animation: waveIdle 2s ease-in-out infinite;
+    height: 6px;
+  }
+  .wave-bar:nth-child(1){animation-delay:0s;}   .wave-bar:nth-child(2){animation-delay:0.1s;}
+  .wave-bar:nth-child(3){animation-delay:0.2s;} .wave-bar:nth-child(4){animation-delay:0.3s;}
+  .wave-bar:nth-child(5){animation-delay:0.15s;}.wave-bar:nth-child(6){animation-delay:0.25s;}
+  .wave-bar:nth-child(7){animation-delay:0.05s;}.wave-bar:nth-child(8){animation-delay:0.35s;}
+  .wave-bar:nth-child(9){animation-delay:0.2s;}
+  @keyframes waveIdle { 0%,100%{height:4px} 50%{height:10px} }
+  .demo-zone[data-mode="listen"]:hover .wave-bar { animation: waveActive 0.4s ease-in-out infinite alternate; }
+  .demo-zone[data-mode="listen"]:hover .wave-bar:nth-child(1){animation-delay:0s;height:28px;}
+  .demo-zone[data-mode="listen"]:hover .wave-bar:nth-child(2){animation-delay:0.07s;}
+  .demo-zone[data-mode="listen"]:hover .wave-bar:nth-child(3){animation-delay:0.14s;}
+  @keyframes waveActive { from{height:8px} to{height:32px} }
+
+  /* context / scan mode */
+  .demo-zone[data-mode="context"]:hover .cp-ring {
+    width: 44px; height: 44px;
+    border-color: rgba(251,191,36,0.7);
+    box-shadow: 0 0 16px rgba(251,191,36,0.2);
+  }
+  .demo-zone[data-mode="context"]:hover .cp-dot { background: #fbbf24; box-shadow: 0 0 8px rgba(251,191,36,0.9); }
+
+  /* scan beam in preview */
+  .cp-scan { position: absolute; width: 44px; height: 44px; opacity: 0; transition: opacity 0.3s; overflow: hidden; border-radius: 50%; }
+  .demo-zone[data-mode="context"]:hover .cp-scan { opacity: 1; }
+  .cp-scan::after {
+    content: ''; position: absolute; top: 50%; left: 50%;
+    width: 22px; height: 1.5px; background: rgba(251,191,36,0.9);
+    transform-origin: 0 50%; animation: cpScanRotate 1.2s linear infinite;
+    box-shadow: 0 0 6px rgba(251,191,36,0.8);
+  }
+  @keyframes cpScanRotate { to { transform: rotate(360deg); } }
+
+  /* scan lines in context card */
+  .scan-lines { width: 100%; display: flex; flex-direction: column; gap: 6px; }
+  .scan-line { height: 6px; background: rgba(255,255,255,0.08); border-radius: 3px; position: relative; overflow: hidden; }
+  .scan-line::after {
+    content: ''; position: absolute; top: 0; left: -100%; width: 60%; height: 100%;
+    background: linear-gradient(90deg, transparent, rgba(251,191,36,0.5), transparent);
+    animation: scanLine 2s ease-in-out infinite;
+  }
+  .scan-line:nth-child(1)::after { animation-delay: 0s; width: 75%; }
+  .scan-line:nth-child(2)::after { animation-delay: 0.4s; width: 55%; }
+  .scan-line:nth-child(3)::after { animation-delay: 0.8s; width: 85%; }
+  .scan-line:nth-child(4)::after { animation-delay: 1.2s; width: 65%; }
+  @keyframes scanLine { 0%{left:-100%} 100%{left:200%} }
+
+  /* transcription ticker */
+  .ticker { height: 18px; overflow: hidden; font-family: 'Fira Code', monospace; font-size: 11px; color: rgba(239,68,68,0.8); }
+  .ticker-inner { animation: tickerScroll 8s linear infinite; }
+  @keyframes tickerScroll { 0%,15%{transform:translateY(0)} 33%,48%{transform:translateY(-18px)} 66%,81%{transform:translateY(-36px)} 99%,100%{transform:translateY(0)} }
+
+  /* rec dot blink */
+  .rec-dot { width: 7px; height: 7px; background: #ef4444; border-radius: 50%; animation: recBlink 1s ease-in-out infinite; display: inline-block; margin-right: 5px; }
+  @keyframes recBlink { 0%,100%{opacity:1} 50%{opacity:0.2} }
+
+  /* ── HOW IT WORKS ── */
+  .step-visual { transition: opacity 0.6s, transform 0.6s; }
+
+  /* ── KNOWLEDGE GRAPH ── */
+  #kgraph { display: block; width: 100%; }
+
+  /* ── TRAINING LOOP ── */
+  .loop-node {
+    background: rgba(13,13,26,0.9); border: 1px solid rgba(124,58,237,0.3);
+    border-radius: 16px; padding: 1.2rem 1.5rem; text-align: center;
+    transition: border-color 0.4s, box-shadow 0.4s, transform 0.4s;
+    opacity: 0; transform: scale(0.85);
+  }
+  .loop-node.lit { opacity: 1; transform: scale(1); border-color: rgba(124,58,237,0.7); box-shadow: 0 0 24px rgba(124,58,237,0.2); }
+  .loop-connector { height: 2px; flex: 1; background: rgba(124,58,237,0.15); position: relative; overflow: hidden; }
+  .loop-connector::after {
+    content: ''; position: absolute; top: 0; left: -100%; width: 100%; height: 100%;
+    background: linear-gradient(90deg, transparent, rgba(129,140,248,0.8), transparent);
+    opacity: 0;
+  }
+  .loop-connector.lit::after { opacity: 1; animation: connFlow 1.2s ease-in-out forwards; }
+  @keyframes connFlow { from{left:-100%} to{left:100%} }
+
+  /* ── BENTO GRID ── */
+  .bento-card {
+    background: rgba(13,13,26,0.65); backdrop-filter: blur(16px);
+    border: 1px solid rgba(255,255,255,0.05); border-radius: 20px; padding: 1.75rem;
+    transition: border-color 0.35s, box-shadow 0.35s, transform 0.35s;
+    position: relative; overflow: hidden;
+  }
+  .bento-card::before {
+    content: ''; position: absolute; inset: 0; border-radius: 20px;
+    background: linear-gradient(135deg, rgba(124,58,237,0.08), transparent);
+    opacity: 0; transition: opacity 0.35s;
+  }
+  .bento-card:hover { border-color: rgba(124,58,237,0.35); box-shadow: 0 8px 40px rgba(124,58,237,0.12); transform: translateY(-3px); }
+  .bento-card:hover::before { opacity: 1; }
+  .bento-icon { font-size: 28px; margin-bottom: 0.75rem; display: block; }
+
+  /* ── TIMELINE ── */
+  .timeline-item { display: flex; gap: 1rem; padding-left: 0.5rem; }
+  .tl-line { display: flex; flex-direction: column; align-items: center; gap: 0; }
+  .tl-dot { width: 12px; height: 12px; border-radius: 50%; background: var(--violet); flex-shrink: 0; box-shadow: 0 0 8px rgba(124,58,237,0.6); margin-top: 4px; }
+  .tl-connector { width: 2px; flex: 1; background: linear-gradient(180deg, rgba(124,58,237,0.4), rgba(124,58,237,0.05)); min-height: 40px; }
+
+  /* ── WAITLIST ── */
+  input:focus { outline: none; ring: 2px solid var(--indigo); }
+
+  /* ── FOOTER ── */
+  footer a:hover { color: var(--glow); }
+</style>
+</head>
+<body>
+
+<!-- Scroll Progress -->
+<div id="scroll-bar"></div>
+
+
+<!-- Custom Cursor Overlay -->
+<div id="cursor-wrap">
+  <div id="c-dot"></div>
+  <div id="c-ring"></div>
+  <div id="c-label">AI ACTIVE</div>
+  <div id="c-orbit" class="orbit-ring" style="width:64px;height:64px;opacity:0;transition:opacity 0.3s;"></div>
+  <div id="c-sonar" style="position:absolute;transform:translate(-50%,-50%);opacity:0;transition:opacity 0.3s;">
+    <div class="sonar-ring"></div>
+    <div class="sonar-ring"></div>
+    <div class="sonar-ring"></div>
+  </div>
+  <div id="c-scan" class="scan-beam" style="opacity:0;transition:opacity 0.3s;"></div>
+</div>
+
+<!-- NAV -->
+<nav style="position:fixed;top:0;width:100%;z-index:900;backdrop-filter:blur(16px);background:rgba(5,5,10,0.7);border-bottom:1px solid rgba(124,58,237,0.15);height:64px;">
+  <div style="max-width:1280px;margin:0 auto;padding:0 40px;height:100%;display:flex;justify-content:space-between;align-items:center;">
+    <div style="display:flex;align-items:center;gap:40px;">
+      <span style="font-weight:800;font-size:1.15rem;letter-spacing:-0.02em;">BashIn</span>
+      <div style="display:flex;gap:28px;" class="hidden md:flex">
+        <a href="#demo" style="font-size:0.875rem;color:#94a3b8;transition:color 0.2s;">Demo</a>
+        <a href="#how-it-works" style="font-size:0.875rem;color:#94a3b8;transition:color 0.2s;">How It Works</a>
+        <a href="#features" style="font-size:0.875rem;color:#94a3b8;transition:color 0.2s;">Features</a>
+        <a href="#cases" style="font-size:0.875rem;color:#94a3b8;transition:color 0.2s;">Use Cases</a>
+      </div>
+    </div>
+    <div style="display:flex;gap:16px;align-items:center;">
+      <button id="cta-nav" style="background:linear-gradient(135deg,#7c3aed,#818CF8);padding:8px 22px;border-radius:100px;font-size:0.875rem;font-weight:600;letter-spacing:-0.01em;">Get Started</button>
+    </div>
+  </div>
+</nav>
+
+<!-- ─────────────── HERO ─────────────── -->
+<section style="min-height:100vh;display:flex;align-items:center;justify-content:center;position:relative;overflow:hidden;padding-top:80px;">
+  <div id="stars" style="position:absolute;inset:0;pointer-events:none;"></div>
+  <div class="aurora" style="--d:18s;width:500px;height:500px;background:radial-gradient(#7c3aed55,transparent);top:10%;left:10%;"></div>
+  <div class="aurora" style="--d:22s;animation-delay:-8s;width:600px;height:600px;background:radial-gradient(#2563eb44,transparent);bottom:10%;right:5%;"></div>
+
+  <div style="position:relative;z-index:10;text-align:center;max-width:840px;padding:0 24px;">
+    <!-- badge -->
+    <div class="reveal" style="display:inline-flex;align-items:center;gap:8px;border:1px solid rgba(124,58,237,0.4);background:rgba(124,58,237,0.08);padding:5px 16px;border-radius:100px;font-size:0.75rem;font-family:'Fira Code',monospace;color:#D8B4FE;letter-spacing:0.08em;margin-bottom:32px;animation:badgePulse 3s ease-in-out infinite;">
+      <span style="width:6px;height:6px;background:#D8B4FE;border-radius:50%;box-shadow:0 0 6px #D8B4FE;"></span>
+      NOW IN EARLY ACCESS
+    </div>
+    <style>@keyframes badgePulse{0%,100%{box-shadow:0 0 0 0 rgba(124,58,237,0)}50%{box-shadow:0 0 0 6px rgba(124,58,237,0.1)}}</style>
+
+    <h1 class="reveal" style="font-size:clamp(2.8rem,7vw,5.5rem);font-weight:900;line-height:1.05;letter-spacing:-0.04em;margin-bottom:24px;transition-delay:0.1s;">
+      Your cursor.<br>
+      <span style="background:linear-gradient(135deg,#818CF8,#D8B4FE);-webkit-background-clip:text;-webkit-text-fill-color:transparent;" id="hero-type"></span><span id="hero-caret" style="color:#818CF8;animation:caretBlink 0.9s step-end infinite;">|</span>
+    </h1>
+    <style>@keyframes caretBlink{0%,100%{opacity:1}50%{opacity:0}}</style>
+
+    <p class="reveal" style="font-size:1.1rem;color:#94a3b8;max-width:560px;margin:0 auto 40px;line-height:1.7;transition-delay:0.2s;">
+      An AI overlay that watches your screen, listens to your voice, learns your patterns — and builds a knowledge graph that trains a model specifically for you.
+    </p>
+
+    <div class="reveal" style="display:flex;flex-wrap:wrap;gap:14px;justify-content:center;margin-bottom:48px;transition-delay:0.3s;">
+      <button style="background:linear-gradient(135deg,#7c3aed,#818CF8);padding:14px 32px;border-radius:14px;font-weight:700;font-size:0.95rem;box-shadow:0 4px 24px rgba(124,58,237,0.35);transition:transform 0.2s,box-shadow 0.2s;" onmouseover="this.style.transform='scale(1.04)';this.style.boxShadow='0 8px 40px rgba(124,58,237,0.5)'" onmouseout="this.style.transform='scale(1)';this.style.boxShadow='0 4px 24px rgba(124,58,237,0.35)'">Get Early Access →</button>
+      <button onclick="document.getElementById('demo').scrollIntoView({behavior:'smooth'})" style="padding:14px 32px;border-radius:14px;font-weight:600;font-size:0.95rem;border:1px solid rgba(124,58,237,0.35);background:rgba(124,58,237,0.07);backdrop-filter:blur(8px);transition:border-color 0.2s,background 0.2s;" onmouseover="this.style.borderColor='rgba(124,58,237,0.6)';this.style.background='rgba(124,58,237,0.12)'" onmouseout="this.style.borderColor='rgba(124,58,237,0.35)';this.style.background='rgba(124,58,237,0.07)'">Watch Demo ↓</button>
+    </div>
+
+    <div class="reveal" style="display:flex;flex-wrap:wrap;gap:10px;justify-content:center;transition-delay:0.4s;">
+      <span style="font-size:0.78rem;padding:4px 14px;border-radius:100px;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);color:#94a3b8;">🎓 Learners</span>
+      <span style="font-size:0.78rem;padding:4px 14px;border-radius:100px;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);color:#94a3b8;">💻 Developers</span>
+      <span style="font-size:0.78rem;padding:4px 14px;border-radius:100px;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);color:#94a3b8;">📦 Product teams</span>
+      <span style="font-size:0.78rem;padding:4px 14px;border-radius:100px;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);color:#94a3b8;">🎫 Service teams</span>
+      <span style="font-size:0.78rem;padding:4px 14px;border-radius:100px;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);color:#94a3b8;">🎨 Creatives</span>
+      <span style="font-size:0.78rem;padding:4px 14px;border-radius:100px;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);color:#94a3b8;">🎮 Gamers</span>
+    </div>
+  </div>
+
+  <!-- scroll chevron -->
+  <div id="scroll-hint" style="position:absolute;bottom:40px;left:50%;transform:translateX(-50%);animation:bounce 2s ease-in-out infinite;color:#64748b;font-size:1.5rem;transition:opacity 0.5s;">↓</div>
+  <style>@keyframes bounce{0%,100%{transform:translateX(-50%) translateY(0)}50%{transform:translateX(-50%) translateY(8px)}}</style>
+</section>
+
+<!-- ─────────────── CURSOR SHOWCASE "TRY IT HERE" ─────────────── -->
+<section id="demo" style="padding:120px 24px;max-width:1280px;margin:0 auto;">
+  <div style="text-align:center;margin-bottom:64px;">
+    <div class="reveal" style="font-family:'Fira Code',monospace;font-size:11px;letter-spacing:0.2em;color:rgba(216,180,254,0.6);text-transform:uppercase;margin-bottom:16px;">Interactive Demo</div>
+    <h2 class="reveal" style="font-size:clamp(2rem,5vw,3.2rem);font-weight:800;letter-spacing:-0.03em;margin-bottom:16px;transition-delay:0.1s;">This is your cursor.</h2>
+    <p class="reveal" style="color:#94a3b8;font-size:1rem;max-width:480px;margin:0 auto;line-height:1.6;transition-delay:0.2s;">Hover each zone below to feel exactly how BashIn looks and behaves in each mode.</p>
+  </div>
+
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:20px;" class="reveal" style="transition-delay:0.3s;">
+
+    <!-- ZONE A: AI CURSOR -->
+    <div class="demo-zone reveal" data-mode="ai" id="zone-ai" style="transition-delay:0.1s;">
+      <div class="hover-invite">hover me</div>
+      <!-- cursor preview -->
+      <div class="cursor-preview">
+        <div class="cp-orbit" id="cp-orbit-a">
+          <div class="cp-orbit-dot"></div>
+          <div class="cp-orbit-dot"></div>
+          <div class="cp-orbit-dot"></div>
+        </div>
+        <div class="cp-ring"></div>
+        <div class="cp-dot"></div>
+        <div class="cp-ai-label">AI ACTIVE</div>
+      </div>
+      <div style="text-align:center;">
+        <div class="demo-zone-title">✦ The AI Cursor</div>
+        <div class="demo-zone-desc">Orbit ring activates. Three dots circle the cursor as the AI focuses.</div>
+      </div>
+      <!-- what changes on hover (real cursor handled by JS) -->
+      <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:center;margin-top:4px;">
+        <span style="font-family:'Fira Code',monospace;font-size:9px;padding:3px 8px;border-radius:100px;background:rgba(129,140,248,0.1);border:1px solid rgba(129,140,248,0.25);color:#818CF8;">orbit dots</span>
+        <span style="font-family:'Fira Code',monospace;font-size:9px;padding:3px 8px;border-radius:100px;background:rgba(129,140,248,0.1);border:1px solid rgba(129,140,248,0.25);color:#818CF8;">glow ring</span>
+        <span style="font-family:'Fira Code',monospace;font-size:9px;padding:3px 8px;border-radius:100px;background:rgba(129,140,248,0.1);border:1px solid rgba(129,140,248,0.25);color:#818CF8;">AI label</span>
+      </div>
+    </div>
+
+    <!-- ZONE B: LISTENING MODE -->
+    <div class="demo-zone reveal" data-mode="listen" id="zone-listen" style="transition-delay:0.2s;">
+      <div class="hover-invite">hover me</div>
+      <!-- cursor preview -->
+      <div class="cursor-preview" style="position:relative;">
+        <div class="cp-sonar"><span></span><span></span><span></span></div>
+        <div class="cp-ring"></div>
+        <div class="cp-dot"></div>
+      </div>
+      <!-- waveform -->
+      <div style="display:flex;flex-direction:column;align-items:center;gap:10px;width:100%;">
+        <div style="display:flex;align-items:center;gap:6px;">
+          <span class="rec-dot"></span>
+          <span style="font-family:'Fira Code',monospace;font-size:10px;color:rgba(239,68,68,0.8);letter-spacing:0.1em;">LISTENING</span>
+        </div>
+        <div class="wave-bars" id="wave-preview">
+          <div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div>
+          <div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div>
+          <div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div>
+        </div>
+        <div class="ticker" style="width:100%;text-align:center;">
+          <div class="ticker-inner">
+            <div>detecting context...</div>
+            <div>reviewing spreadsheet</div>
+            <div>saved to graph ✓</div>
+          </div>
+        </div>
+      </div>
+      <div style="text-align:center;">
+        <div class="demo-zone-title">🎤 Listening Mode</div>
+        <div class="demo-zone-desc">Sonar pulses radiate. Waveform activates. Transcription streams in.</div>
+      </div>
+    </div>
+
+    <!-- ZONE C: CONTEXT SCAN -->
+    <div class="demo-zone reveal" data-mode="context" id="zone-ctx" style="transition-delay:0.3s;">
+      <div class="hover-invite">hover me</div>
+      <!-- cursor preview -->
+      <div class="cursor-preview">
+        <div class="cp-scan"></div>
+        <div class="cp-ring"></div>
+        <div class="cp-dot"></div>
+      </div>
+      <!-- scan lines -->
+      <div style="width:100%;padding:0 8px;">
+        <div style="background:rgba(5,5,10,0.6);border-radius:10px;padding:12px;border:1px solid rgba(251,191,36,0.15);">
+          <div style="font-family:'Fira Code',monospace;font-size:9px;color:rgba(251,191,36,0.6);margin-bottom:8px;letter-spacing:0.1em;">SCANNING CONTEXT</div>
+          <div class="scan-lines">
+            <div class="scan-line" style="width:80%;"></div>
+            <div class="scan-line" style="width:55%;"></div>
+            <div class="scan-line" style="width:90%;"></div>
+            <div class="scan-line" style="width:70%;"></div>
+          </div>
+          <div style="font-family:'Fira Code',monospace;font-size:9px;color:rgba(251,191,36,0.7);margin-top:8px;">MATCH FOUND: variance_col</div>
+        </div>
+      </div>
+      <div style="text-align:center;">
+        <div class="demo-zone-title">🧠 Context Mode</div>
+        <div class="demo-zone-desc">Scan beam rotates. Screen content is read and matched to your patterns.</div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Marquee -->
+  <div style="margin-top:64px;border-top:1px solid rgba(124,58,237,0.12);border-bottom:1px solid rgba(124,58,237,0.12);padding:18px 0;overflow:hidden;">
+    <div class="marquee-wrap">
+      <div class="marquee-track" style="font-family:'Fira Code',monospace;font-size:11px;color:#C4B5FD;letter-spacing:0.15em;text-transform:uppercase;">
+        <span>Context Aware</span><span style="color:rgba(124,58,237,0.4);">◆</span>
+        <span>Voice Input</span><span style="color:rgba(124,58,237,0.4);">◆</span>
+        <span>Screen Reading</span><span style="color:rgba(124,58,237,0.4);">◆</span>
+        <span>Pattern Learning</span><span style="color:rgba(124,58,237,0.4);">◆</span>
+        <span>Graph Sync</span><span style="color:rgba(124,58,237,0.4);">◆</span>
+        <span>Obsidian Vault</span><span style="color:rgba(124,58,237,0.4);">◆</span>
+        <span>Graphify</span><span style="color:rgba(124,58,237,0.4);">◆</span>
+        <span>Adaptive UI</span><span style="color:rgba(124,58,237,0.4);">◆</span>
+        <span>Local-First</span><span style="color:rgba(124,58,237,0.4);">◆</span>
+        <span>Private Model</span><span style="color:rgba(124,58,237,0.4);">◆</span>
+      </div>
+      <div class="marquee-track" aria-hidden="true" style="font-family:'Fira Code',monospace;font-size:11px;color:#C4B5FD;letter-spacing:0.15em;text-transform:uppercase;">
+        <span>Context Aware</span><span style="color:rgba(124,58,237,0.4);">◆</span>
+        <span>Voice Input</span><span style="color:rgba(124,58,237,0.4);">◆</span>
+        <span>Screen Reading</span><span style="color:rgba(124,58,237,0.4);">◆</span>
+        <span>Pattern Learning</span><span style="color:rgba(124,58,237,0.4);">◆</span>
+        <span>Graph Sync</span><span style="color:rgba(124,58,237,0.4);">◆</span>
+        <span>Obsidian Vault</span><span style="color:rgba(124,58,237,0.4);">◆</span>
+        <span>Graphify</span><span style="color:rgba(124,58,237,0.4);">◆</span>
+        <span>Adaptive UI</span><span style="color:rgba(124,58,237,0.4);">◆</span>
+        <span>Local-First</span><span style="color:rgba(124,58,237,0.4);">◆</span>
+        <span>Private Model</span><span style="color:rgba(124,58,237,0.4);">◆</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ─────────────── HOW IT WORKS ─────────────── -->
+<section id="how-it-works" style="padding:120px 24px;background:linear-gradient(180deg,rgba(124,58,237,0.03),transparent);">
+  <div style="max-width:1280px;margin:0 auto;">
+    <div style="text-align:center;margin-bottom:80px;">
+      <div class="reveal" style="font-family:'Fira Code',monospace;font-size:11px;letter-spacing:0.2em;color:rgba(216,180,254,0.6);text-transform:uppercase;margin-bottom:16px;">The Mechanism</div>
+      <h2 class="reveal" style="font-size:clamp(2rem,5vw,3.2rem);font-weight:800;letter-spacing:-0.03em;transition-delay:0.1s;">Watch it learn you.</h2>
+    </div>
+
+    <div style="display:flex;flex-direction:column;gap:0;" id="how-chapters">
+
+      <!-- Chapter 1 -->
+      <div class="chapter" style="display:grid;grid-template-columns:1fr 1fr;gap:80px;align-items:center;padding:80px 0;border-bottom:1px solid rgba(255,255,255,0.04);" data-chapter="1">
+        <div class="reveal-left">
+          <div style="font-family:'Fira Code',monospace;font-size:11px;letter-spacing:0.2em;color:rgba(129,140,248,0.7);margin-bottom:20px;">01 / OBSERVE</div>
+          <h3 style="font-size:2rem;font-weight:800;letter-spacing:-0.02em;margin-bottom:20px;">It watches, silently.</h3>
+          <p style="color:#94a3b8;font-size:1rem;line-height:1.8;max-width:420px;">The cursor overlay runs above every application. It sees what app you're in, what you're reading, where you pause, what you re-read. Passive. Zero interruptions. Sub-50ms latency.</p>
+        </div>
+        <div class="reveal-right" style="position:relative;border-radius:20px;background:rgba(13,13,26,0.7);border:1px solid rgba(124,58,237,0.15);padding:2rem;height:300px;overflow:hidden;">
+          <!-- animated cursor trail -->
+          <div id="ch1-visual" style="position:relative;width:100%;height:100%;">
+            <div style="font-size:0.8rem;color:rgba(255,255,255,0.2);font-family:'Fira Code',monospace;line-height:2;">
+              <span style="color:rgba(129,140,248,0.4);">const</span> learn = <span style="color:rgba(216,180,254,0.4);">async</span> () => {<br>
+              &nbsp;&nbsp;<span style="color:rgba(129,140,248,0.4);">await</span> observe(screen);<br>
+              &nbsp;&nbsp;<span style="color:rgba(129,140,248,0.4);">const</span> pattern = map(behavior);<br>
+              &nbsp;&nbsp;<span style="color:rgba(216,180,254,0.4);">return</span> train(pattern);<br>
+              }
+            </div>
+            <div id="ch1-cursor" style="position:absolute;width:8px;height:8px;background:#f1f5f9;border-radius:50%;box-shadow:0 0 8px rgba(255,255,255,0.8);pointer-events:none;transition:all 0.8s cubic-bezier(0.23,1,0.32,1);"></div>
+            <div id="ch1-ring" style="position:absolute;width:28px;height:28px;border:1.5px solid rgba(216,180,254,0.4);border-radius:50%;pointer-events:none;transform:translate(-50%,-50%);transition:all 1s cubic-bezier(0.23,1,0.32,1);"></div>
+            <!-- trail dots -->
+            <div id="ch1-trail" style="position:absolute;inset:0;pointer-events:none;"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Chapter 2 -->
+      <div class="chapter" style="display:grid;grid-template-columns:1fr 1fr;gap:80px;align-items:center;padding:80px 0;border-bottom:1px solid rgba(255,255,255,0.04);" data-chapter="2">
+        <div class="reveal-right" style="position:relative;border-radius:20px;background:rgba(13,13,26,0.7);border:1px solid rgba(124,58,237,0.15);padding:2rem;height:300px;overflow:hidden;order:1;">
+          <canvas id="mini-graph" style="width:100%;height:100%;"></canvas>
+        </div>
+        <div class="reveal-left" style="order:2;">
+          <div style="font-family:'Fira Code',monospace;font-size:11px;letter-spacing:0.2em;color:rgba(129,140,248,0.7);margin-bottom:20px;">02 / MAP</div>
+          <h3 style="font-size:2rem;font-weight:800;letter-spacing:-0.02em;margin-bottom:20px;">Your knowledge, mapped.</h3>
+          <p style="color:#94a3b8;font-size:1rem;line-height:1.8;max-width:420px;">Every interaction becomes a node. Your Obsidian vault grows in the background. Graphify draws the connections — topics, patterns, relationships — as you work. Automatically.</p>
+          <div style="display:flex;gap:8px;margin-top:24px;flex-wrap:wrap;">
+            <span style="font-size:0.78rem;padding:4px 12px;border-radius:100px;background:rgba(124,58,237,0.1);border:1px solid rgba(124,58,237,0.25);color:#C4B5FD;">Graphify</span>
+            <span style="font-size:0.78rem;padding:4px 12px;border-radius:100px;background:rgba(124,58,237,0.1);border:1px solid rgba(124,58,237,0.25);color:#C4B5FD;">Obsidian Vault</span>
+            <span style="font-size:0.78rem;padding:4px 12px;border-radius:100px;background:rgba(124,58,237,0.1);border:1px solid rgba(124,58,237,0.25);color:#C4B5FD;">Auto-sync</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Chapter 3 -->
+      <div class="chapter" style="display:grid;grid-template-columns:1fr 1fr;gap:80px;align-items:center;padding:80px 0;border-bottom:1px solid rgba(255,255,255,0.04);" data-chapter="3">
+        <div class="reveal-left">
+          <div style="font-family:'Fira Code',monospace;font-size:11px;letter-spacing:0.2em;color:rgba(129,140,248,0.7);margin-bottom:20px;">03 / VERIFY</div>
+          <h3 style="font-size:2rem;font-weight:800;letter-spacing:-0.02em;margin-bottom:20px;">It asks before it assumes.</h3>
+          <p style="color:#94a3b8;font-size:1rem;line-height:1.8;max-width:420px;">Once a week, a quiet digest: "Here's what I learned about how you work. Confirm or correct." Your model is built on verified truth — not guesses. You stay in control.</p>
+        </div>
+        <div class="reveal-right" style="display:flex;align-items:center;justify-content:center;height:300px;">
+          <!-- notification card animation -->
+          <div id="notif-card" style="background:rgba(13,13,26,0.9);border:1px solid rgba(124,58,237,0.3);border-radius:20px;padding:1.5rem;max-width:320px;width:100%;box-shadow:0 8px 40px rgba(124,58,237,0.15);transform:translateY(20px);opacity:0;transition:all 0.8s cubic-bezier(0.22,1,0.36,1);">
+            <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;">
+              <div style="width:8px;height:8px;background:#818CF8;border-radius:50%;box-shadow:0 0 6px #818CF8;"></div>
+              <span style="font-family:'Fira Code',monospace;font-size:10px;color:#818CF8;letter-spacing:0.1em;">WEEKLY DIGEST</span>
+            </div>
+            <p style="font-size:0.875rem;color:#e2e8f0;margin-bottom:16px;line-height:1.5;">3 new patterns detected this week. Please confirm:</p>
+            <div style="display:flex;flex-direction:column;gap:8px;">
+              <div style="display:flex;align-items:center;gap:8px;font-size:0.8rem;color:#94a3b8;">
+                <span style="color:#22c55e;font-size:1rem;">✓</span> You re-read Rust docs before writing
+              </div>
+              <div style="display:flex;align-items:center;gap:8px;font-size:0.8rem;color:#94a3b8;">
+                <span style="color:#22c55e;font-size:1rem;">✓</span> Variance column checked first
+              </div>
+              <div style="display:flex;align-items:center;gap:8px;font-size:0.8rem;color:#94a3b8;">
+                <span style="color:#f59e0b;font-size:1rem;">?</span> Morning = deep work mode
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Chapter 4 -->
+      <div class="chapter" style="display:grid;grid-template-columns:1fr 1fr;gap:80px;align-items:center;padding:80px 0;" data-chapter="4">
+        <div class="reveal-right" style="display:flex;align-items:center;justify-content:center;height:300px;order:1;">
+          <!-- training progress -->
+          <div style="width:100%;max-width:320px;">
+            <div style="font-family:'Fira Code',monospace;font-size:10px;color:rgba(129,140,248,0.7);letter-spacing:0.1em;margin-bottom:16px;">TRAINING YOUR MODEL</div>
+            <div style="background:rgba(5,5,10,0.8);border-radius:100px;height:8px;margin-bottom:12px;overflow:hidden;border:1px solid rgba(124,58,237,0.2);">
+              <div id="train-bar" style="height:100%;background:linear-gradient(90deg,#7c3aed,#818CF8,#D8B4FE);border-radius:100px;width:0%;transition:width 2.5s cubic-bezier(0.22,1,0.36,1);box-shadow:0 0 8px rgba(129,140,248,0.4);"></div>
+            </div>
+            <div id="train-label" style="font-family:'Fira Code',monospace;font-size:11px;color:#818CF8;transition:all 0.5s;">Initializing...</div>
+            <div style="margin-top:24px;display:flex;flex-direction:column;gap:8px;">
+              <div style="font-size:0.8rem;color:#94a3b8;display:flex;align-items:center;gap:8px;"><span id="t1" style="color:#818CF8;opacity:0.3;transition:opacity 0.5s;">✦</span> Learning your navigation patterns</div>
+              <div style="font-size:0.8rem;color:#94a3b8;display:flex;align-items:center;gap:8px;"><span id="t2" style="color:#818CF8;opacity:0.3;transition:opacity 0.5s;">✦</span> Indexing knowledge graph</div>
+              <div style="font-size:0.8rem;color:#94a3b8;display:flex;align-items:center;gap:8px;"><span id="t3" style="color:#818CF8;opacity:0.3;transition:opacity 0.5s;">✦</span> Calibrating to your workflow</div>
+              <div style="font-size:0.8rem;color:#94a3b8;display:flex;align-items:center;gap:8px;"><span id="t4" style="color:#D8B4FE;opacity:0.3;transition:opacity 0.5s;">✓</span> Model ready</div>
+            </div>
+          </div>
+        </div>
+        <div class="reveal-left" style="order:2;">
+          <div style="font-family:'Fira Code',monospace;font-size:11px;letter-spacing:0.2em;color:rgba(129,140,248,0.7);margin-bottom:20px;">04 / TRAIN</div>
+          <h3 style="font-size:2rem;font-weight:800;letter-spacing:-0.02em;margin-bottom:20px;">Then it becomes yours. Entirely.</h3>
+          <p style="color:#94a3b8;font-size:1rem;line-height:1.8;max-width:420px;">Fine-tuned on your verified patterns. Not a general AI. Not a shared model. A model trained on <em style="color:#D8B4FE;">you</em> — for your spreadsheets, your codebase, your exact workflows. Updates silently overnight.</p>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<!-- ─────────────── KNOWLEDGE GRAPH ─────────────── -->
+<section style="padding:120px 24px;background:#05050a;position:relative;overflow:hidden;">
+  <div style="max-width:1280px;margin:0 auto;position:relative;z-index:2;">
+    <div style="text-align:center;margin-bottom:48px;">
+      <div class="reveal" style="font-family:'Fira Code',monospace;font-size:11px;letter-spacing:0.2em;color:rgba(216,180,254,0.6);text-transform:uppercase;margin-bottom:16px;">Knowledge Infrastructure</div>
+      <h2 class="reveal" style="font-size:clamp(2rem,5vw,3rem);font-weight:800;letter-spacing:-0.03em;margin-bottom:16px;transition-delay:0.1s;">Your knowledge, connected.</h2>
+      <p class="reveal" style="color:#94a3b8;max-width:480px;margin:0 auto;line-height:1.6;transition-delay:0.2s;">Every session builds your graph. Every pattern becomes a node. Powered by Graphify + your Obsidian vault. All local. All yours.</p>
+    </div>
+    <div class="reveal" style="transition-delay:0.3s;border-radius:24px;overflow:hidden;border:1px solid rgba(124,58,237,0.15);background:rgba(13,13,26,0.5);height:460px;position:relative;">
+      <canvas id="kgraph" style="position:absolute;inset:0;width:100%;height:100%;"></canvas>
+      <div style="position:absolute;bottom:24px;left:50%;transform:translateX(-50%);display:flex;gap:24px;">
+        <div style="text-align:center;"><div id="stat1" style="font-size:1.5rem;font-weight:800;background:linear-gradient(135deg,#818CF8,#D8B4FE);-webkit-background-clip:text;-webkit-text-fill-color:transparent;">0</div><div style="font-size:0.75rem;color:#64748b;font-family:'Fira Code',monospace;">nodes</div></div>
+        <div style="text-align:center;"><div id="stat2" style="font-size:1.5rem;font-weight:800;background:linear-gradient(135deg,#818CF8,#D8B4FE);-webkit-background-clip:text;-webkit-text-fill-color:transparent;">0</div><div style="font-size:0.75rem;color:#64748b;font-family:'Fira Code',monospace;">connections</div></div>
+        <div style="text-align:center;"><div id="stat3" style="font-size:1.5rem;font-weight:800;background:linear-gradient(135deg,#818CF8,#D8B4FE);-webkit-background-clip:text;-webkit-text-fill-color:transparent;">0</div><div style="font-size:0.75rem;color:#64748b;font-family:'Fira Code',monospace;">sessions</div></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ─────────────── ROADMAP ─────────────── -->
+<section id="cases" style="padding:120px 24px;">
+  <div style="max-width:900px;margin:0 auto;">
+  <div style="text-align:center;margin-bottom:56px;">
+    <div class="reveal" style="font-family:'Fira Code',monospace;font-size:11px;letter-spacing:0.2em;color:rgba(216,180,254,0.6);text-transform:uppercase;margin-bottom:16px;">Watch It Learn You</div>
+    <h2 class="reveal" style="font-size:clamp(2rem,5vw,3rem);font-weight:800;letter-spacing:-0.03em;transition-delay:0.1s;">Your personal AI. Day by day.</h2>
+    <p class="reveal" style="color:#64748b;font-size:0.95rem;margin-top:14px;transition-delay:0.2s;">Pick your role. Watch BashIn learn you in real time.</p>
+  </div>
+
+  <!-- Tab selector -->
+  <div class="reveal" style="display:flex;gap:10px;flex-wrap:wrap;justify-content:center;margin-bottom:56px;transition-delay:0.3s;">
+    <button class="rtab active" data-tab="learner"   style="--tc:#818CF8;">🎓 Learners</button>
+    <button class="rtab"        data-tab="developer" style="--tc:#34d399;">💻 Developers</button>
+    <button class="rtab"        data-tab="company"   style="--tc:#60a5fa;">📦 Companies</button>
+    <button class="rtab"        data-tab="creative"  style="--tc:#f472b6;">🎨 Creatives</button>
+    <button class="rtab"        data-tab="gamer"     style="--tc:#fbbf24;">🎮 Gamers</button>
+  </div>
+
+  <!-- Roadmap panels -->
+  <div id="roadmap-wrap" style="position:relative;"></div>
+  </div>
+
+</section>
+
+<!-- ─────────────── TRAINING LOOP ─────────────── -->
+<section style="padding:120px 24px;background:linear-gradient(180deg,transparent,rgba(124,58,237,0.04),transparent);">
+  <div style="max-width:1280px;margin:0 auto;">
+    <div style="text-align:center;margin-bottom:64px;">
+      <div class="reveal" style="font-family:'Fira Code',monospace;font-size:11px;letter-spacing:0.2em;color:rgba(216,180,254,0.6);text-transform:uppercase;margin-bottom:16px;">The Loop</div>
+      <h2 class="reveal" style="font-size:clamp(2rem,5vw,3rem);font-weight:800;letter-spacing:-0.03em;transition-delay:0.1s;">How it learns you.</h2>
+    </div>
+
+    <div id="loop-diagram" style="display:flex;align-items:center;gap:0;overflow-x:auto;padding:8px 0;">
+      <div class="loop-node" data-node="0" style="min-width:140px;">
+        <div style="font-size:1.5rem;margin-bottom:8px;">👁</div>
+        <div style="font-weight:600;font-size:0.875rem;margin-bottom:4px;">Observe</div>
+        <div style="font-size:0.75rem;color:#64748b;line-height:1.4;">Passive screen tracking</div>
+      </div>
+      <div class="loop-connector" data-conn="0"></div>
+      <div class="loop-node" data-node="1" style="min-width:140px;">
+        <div style="font-size:1.5rem;margin-bottom:8px;">🕸</div>
+        <div style="font-weight:600;font-size:0.875rem;margin-bottom:4px;">Map to Graph</div>
+        <div style="font-size:0.75rem;color:#64748b;line-height:1.4;">Obsidian + Graphify</div>
+      </div>
+      <div class="loop-connector" data-conn="1"></div>
+      <div class="loop-node" data-node="2" style="min-width:140px;">
+        <div style="font-size:1.5rem;margin-bottom:8px;">✅</div>
+        <div style="font-weight:600;font-size:0.875rem;margin-bottom:4px;">Verify</div>
+        <div style="font-size:0.75rem;color:#64748b;line-height:1.4;">Weekly digest</div>
+      </div>
+      <div class="loop-connector" data-conn="2"></div>
+      <div class="loop-node" data-node="3" style="min-width:140px;">
+        <div style="font-size:1.5rem;margin-bottom:8px;">⚙</div>
+        <div style="font-weight:600;font-size:0.875rem;margin-bottom:4px;">Train Model</div>
+        <div style="font-size:0.75rem;color:#64748b;line-height:1.4;">Fine-tuned on you</div>
+      </div>
+      <div class="loop-connector" data-conn="3"></div>
+      <div class="loop-node" data-node="4" style="min-width:140px;">
+        <div style="font-size:1.5rem;margin-bottom:8px;">🖱</div>
+        <div style="font-weight:600;font-size:0.875rem;margin-bottom:4px;">Your Cursor</div>
+        <div style="font-size:0.75rem;color:#64748b;line-height:1.4;">Deploys overnight</div>
+      </div>
+    </div>
+    <div style="text-align:center;margin-top:20px;font-family:'Fira Code',monospace;font-size:10px;color:rgba(124,58,237,0.5);letter-spacing:0.1em;">↩ feedback loop — continuous improvement</div>
+  </div>
+</section>
+
+<!-- ─────────────── FEATURES ─────────────── -->
+<section id="features" style="padding:120px 24px;max-width:1280px;margin:0 auto;">
+  <div style="text-align:center;margin-bottom:64px;">
+    <div class="reveal" style="font-family:'Fira Code',monospace;font-size:11px;letter-spacing:0.2em;color:rgba(216,180,254,0.6);text-transform:uppercase;margin-bottom:16px;">Full Feature Set</div>
+    <h2 class="reveal" style="font-size:clamp(2rem,5vw,3rem);font-weight:800;letter-spacing:-0.03em;transition-delay:0.1s;">Everything, everywhere.</h2>
+  </div>
+
+  <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:16px;" class="reveal" style="transition-delay:0.2s;">
+    <div class="bento-card"><span class="bento-icon">🖥️</span><h5 style="font-weight:700;margin-bottom:8px;">Always-On Overlay</h5><p style="font-size:0.85rem;color:#64748b;line-height:1.5;">Renders above every application. Never lost behind a window. Zero setup.</p></div>
+    <div class="bento-card"><span class="bento-icon">🎤</span><h5 style="font-weight:700;margin-bottom:8px;">Voice + Visual Modes</h5><p style="font-size:0.85rem;color:#64748b;line-height:1.5;">Switch between screen-reading AI and voice AI instantly. Or run both simultaneously.</p></div>
+    <div class="bento-card"><span class="bento-icon">🕸️</span><h5 style="font-weight:700;margin-bottom:8px;">Obsidian + Graphify</h5><p style="font-size:0.85rem;color:#64748b;line-height:1.5;">Your vault updates automatically. Your graph draws itself. Knowledge stays organized.</p></div>
+    <div class="bento-card"><span class="bento-icon">🔒</span><h5 style="font-weight:700;margin-bottom:8px;">Private by Default</h5><p style="font-size:0.85rem;color:#64748b;line-height:1.5;">All learning is local. Nothing leaves your machine without your explicit export.</p></div>
+    <div class="bento-card"><span class="bento-icon">⚡</span><h5 style="font-weight:700;margin-bottom:8px;">Task-Specific Intelligence</h5><p style="font-size:0.85rem;color:#64748b;line-height:1.5;">Trained on your exact spreadsheets, your exact codebase, your exact workflows.</p></div>
+    <div class="bento-card"><span class="bento-icon">🎯</span><h5 style="font-weight:700;margin-bottom:8px;">Adaptive Presence</h5><p style="font-size:0.85rem;color:#64748b;line-height:1.5;">Knows when to suggest. Knows when to disappear. Learns the difference over time.</p></div>
+  </div>
+</section>
+
+<!-- ─────────────── WAITLIST ─────────────── -->
+<section style="padding:120px 24px;">
+  <div style="max-width:760px;margin:0 auto;position:relative;border-radius:32px;overflow:hidden;" class="reveal">
+    <div style="position:absolute;inset:0;background:rgba(13,13,26,0.8);backdrop-filter:blur(20px);border:1px solid rgba(124,58,237,0.2);border-radius:32px;"></div>
+    <div class="aurora" style="--d:12s;width:300px;height:300px;background:radial-gradient(#7c3aed44,transparent);top:-80px;left:-80px;pointer-events:none;"></div>
+    <div class="aurora" style="--d:16s;animation-delay:-6s;width:280px;height:280px;background:radial-gradient(#818CF844,transparent);bottom:-80px;right:-80px;pointer-events:none;"></div>
+    <div style="position:relative;z-index:2;padding:4rem;text-align:center;">
+      <h2 style="font-size:clamp(2rem,5vw,2.8rem);font-weight:900;letter-spacing:-0.03em;margin-bottom:16px;">Ready to BashIn?</h2>
+      <p style="color:#94a3b8;font-size:1rem;margin-bottom:40px;line-height:1.6;max-width:460px;margin-left:auto;margin-right:auto;">Join the private beta. 100 builders per week. Early access users directly shape how the model evolves.</p>
+      <form id="waitlist-form" style="display:flex;gap:12px;max-width:420px;margin:0 auto 24px;flex-wrap:wrap;justify-content:center;">
+        <input type="email" required placeholder="name@domain.com" style="flex:1;min-width:220px;background:rgba(5,5,10,0.8);border:1px solid rgba(124,58,237,0.25);border-radius:14px;padding:14px 20px;font-size:0.9rem;color:#f1f5f9;transition:border-color 0.2s;" onfocus="this.style.borderColor='rgba(129,140,248,0.6)'" onblur="this.style.borderColor='rgba(124,58,237,0.25)'"/>
+        <button type="submit" style="background:linear-gradient(135deg,#7c3aed,#818CF8);padding:14px 28px;border-radius:14px;font-weight:700;font-size:0.9rem;transition:transform 0.2s,box-shadow 0.2s;box-shadow:0 4px 20px rgba(124,58,237,0.3);" onmouseover="this.style.transform='scale(1.04)'" onmouseout="this.style.transform='scale(1)'">Join Beta →</button>
+      </form>
+      <div style="display:flex;gap:16px;justify-content:center;flex-wrap:wrap;">
+        <span style="font-size:0.78rem;color:#64748b;">✓ No spam</span>
+        <span style="font-size:0.78rem;color:#64748b;">✓ Early access priority</span>
+        <span style="font-size:0.78rem;color:#64748b;">✓ Cancel anytime</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ─────────────── FOOTER ─────────────── -->
+<footer style="border-top:1px solid rgba(255,255,255,0.04);padding:64px 40px 40px;background:#05050a;">
+  <div style="max-width:1280px;margin:0 auto;display:flex;justify-content:space-between;flex-wrap:wrap;gap:40px;margin-bottom:48px;">
+    <div>
+      <div style="font-weight:800;font-size:1.1rem;margin-bottom:12px;">BashIn</div>
+      <p style="font-family:'Fira Code',monospace;font-size:0.75rem;color:#475569;max-width:240px;line-height:1.6;">Building the next generation of human-computer synergy. Local-first. Agent-led.</p>
+    </div>
+    <div style="display:flex;gap:48px;flex-wrap:wrap;">
+      <div style="display:flex;flex-direction:column;gap:12px;"><span style="font-weight:600;font-size:0.875rem;">Product</span><a href="#" style="font-size:0.85rem;color:#64748b;transition:color 0.2s;">Features</a><a href="#" style="font-size:0.85rem;color:#64748b;transition:color 0.2s;">Security</a></div>
+      <div style="display:flex;flex-direction:column;gap:12px;"><span style="font-weight:600;font-size:0.875rem;">Connect</span><a href="https://www.instagram.com/__bashin__/" target="_blank" rel="noopener" style="font-size:0.85rem;color:#64748b;transition:color 0.2s;">Instagram</a><a href="https://www.linkedin.com/in/aranyabandhu/" target="_blank" rel="noopener" style="font-size:0.85rem;color:#64748b;transition:color 0.2s;">LinkedIn</a></div>
+    </div>
+  </div>
+  <div style="max-width:1280px;margin:0 auto;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:16px;">
+    <p style="font-family:'Fira Code',monospace;font-size:0.7rem;color:#334155;letter-spacing:0.05em;">© 2025 BASHIN AI. BUILT FOR THE NEXT GENERATION OF BUILDERS.</p>
+    <button id="scroll-top" onclick="window.scrollTo({top:0,behavior:'smooth'})" style="width:40px;height:40px;border-radius:50%;border:1px solid rgba(124,58,237,0.3);display:flex;align-items:center;justify-content:center;color:#94a3b8;transition:background 0.2s,border-color 0.2s;" onmouseover="this.style.background='rgba(124,58,237,0.2)';this.style.borderColor='rgba(124,58,237,0.6)'" onmouseout="this.style.background='transparent';this.style.borderColor='rgba(124,58,237,0.3)'">↑</button>
+  </div>
+</footer>
+
+<!-- ═══════════════════════════════ SCRIPT ═══════════════════════════════ -->
+<script>
+
+// ── CUSTOM CURSOR OVERLAY ──────────────────────────────────────────────
+const cDot   = document.getElementById('c-dot');
+const cRing  = document.getElementById('c-ring');
+const cLabel = document.getElementById('c-label');
+const cOrbit = document.getElementById('c-orbit');
+const cSonar = document.getElementById('c-sonar');
+const cScan  = document.getElementById('c-scan');
+
+let mx = 0, my = 0, rx = 0, ry = 0;
+const lerp = (a, b, t) => a + (b - a) * t;
+
+for (let i = 0; i < 3; i++) {
+  const d = document.createElement('div');
+  d.className = 'orbit-dot';
+  d.style.position = 'absolute';
+  d.style.top = '50%'; d.style.left = '50%';
+  cOrbit.appendChild(d);
+}
+
+let cursorMode = 'default';
+let orbitAngle = 0;
+
+function setCursorMode(mode) {
+  cursorMode = mode;
+  cLabel.style.opacity = mode === 'ai' ? '1' : '0';
+  cOrbit.style.opacity = mode === 'ai' ? '1' : '0';
+  cSonar.style.opacity = mode === 'listen' ? '1' : '0';
+  cScan.style.opacity  = mode === 'context' ? '1' : '0';
+  if (mode === 'ai') {
+    cRing.style.width = '52px'; cRing.style.height = '52px';
+    cRing.style.borderColor = 'rgba(129,140,248,0.8)';
+    cRing.style.boxShadow = '0 0 20px rgba(129,140,248,0.3)';
+  } else if (mode === 'listen') {
+    cRing.style.width = '36px'; cRing.style.height = '36px';
+    cRing.style.borderColor = 'rgba(239,68,68,0.7)';
+    cRing.style.boxShadow = '0 0 16px rgba(239,68,68,0.2)';
+  } else if (mode === 'context') {
+    cRing.style.width = '44px'; cRing.style.height = '44px';
+    cRing.style.borderColor = 'rgba(251,191,36,0.7)';
+    cRing.style.boxShadow = '0 0 16px rgba(251,191,36,0.2)';
+  } else if (mode === 'hover') {
+    cRing.style.width = '60px'; cRing.style.height = '60px';
+    cRing.style.borderColor = 'rgba(129,140,248,0.6)';
+    cRing.style.boxShadow = '0 0 0 0';
+  } else {
+    cRing.style.width = '36px'; cRing.style.height = '36px';
+    cRing.style.borderColor = 'rgba(216,180,254,0.5)';
+    cRing.style.boxShadow = '0 0 0 0';
+  }
+}
+
+window.addEventListener('mousemove', e => {
+  mx = e.clientX; my = e.clientY;
+  cDot.style.left = `${mx}px`; cDot.style.top = `${my}px`;
+  cLabel.style.left = `${mx + 20}px`; cLabel.style.top = `${my - 8}px`;
+  cOrbit.style.left = `${mx}px`; cOrbit.style.top = `${my}px`;
+  cSonar.style.left = `${mx}px`; cSonar.style.top = `${my}px`;
+  cScan.style.left  = `${mx - 18}px`; cScan.style.top = `${my - 18}px`;
+});
+
+function animCursor() {
+  rx = lerp(rx, mx, 0.14); ry = lerp(ry, my, 0.14);
+  cRing.style.left = `${rx}px`; cRing.style.top = `${ry}px`;
+  if (cursorMode === 'ai') {
+    orbitAngle += 0.025;
+    const dots = cOrbit.querySelectorAll('.orbit-dot');
+    dots.forEach((d, i) => {
+      const a = orbitAngle + (i / 3) * Math.PI * 2;
+      const r = 28;
+      d.style.left = `${50 + r * Math.cos(a)}%`;
+      d.style.top  = `${50 + r * Math.sin(a)}%`;
+    });
+  }
+  requestAnimationFrame(animCursor);
+}
+animCursor();
+
+document.getElementById('zone-ai').addEventListener('mouseenter',    () => setCursorMode('ai'));
+document.getElementById('zone-ai').addEventListener('mouseleave',    () => setCursorMode('default'));
+document.getElementById('zone-listen').addEventListener('mouseenter', () => setCursorMode('listen'));
+document.getElementById('zone-listen').addEventListener('mouseleave', () => setCursorMode('default'));
+document.getElementById('zone-ctx').addEventListener('mouseenter',   () => setCursorMode('context'));
+document.getElementById('zone-ctx').addEventListener('mouseleave',   () => setCursorMode('default'));
+
+document.querySelectorAll('a, button').forEach(el => {
+  el.addEventListener('mouseenter', () => { if (cursorMode === 'default') setCursorMode('hover'); });
+  el.addEventListener('mouseleave', () => { if (cursorMode === 'hover') setCursorMode('default'); });
+});
+
+// ── FORCE HIDE OS CURSOR ───────────────────────────────────────────────
+try {
+  const s = new CSSStyleSheet();
+  s.replaceSync('*, *::before, *::after { cursor: none !important; }');
+  document.adoptedStyleSheets = [s];
+} catch(e) {}
+document.addEventListener('mousemove', () => {
+  document.documentElement.style.setProperty('cursor', 'none', 'important');
+  document.body.style.setProperty('cursor', 'none', 'important');
+}, { passive: true, capture: true });
+
+// ── SCROLL PROGRESS ────────────────────────────────────────────────────
+window.addEventListener('scroll', () => {
+  const h = document.documentElement.scrollHeight - document.documentElement.clientHeight;
+  document.getElementById('scroll-bar').style.width = (scrollY / h * 100) + '%';
+  // hide scroll hint
+  if (scrollY > 100) document.getElementById('scroll-hint').style.opacity = '0';
+}, { passive: true });
+
+// ── STARS ───────────────────────────────────────────────────────────────
+const sc = document.getElementById('stars');
+for (let i = 0; i < 120; i++) {
+  const s = document.createElement('div'); s.className = 'star';
+  const sz = Math.random() * 2 + 0.5;
+  s.style.cssText = `width:${sz}px;height:${sz}px;top:${Math.random()*100}%;left:${Math.random()*100}%;--d:${Math.random()*3+2}s;animation-delay:${Math.random()*3}s`;
+  sc.appendChild(s);
+}
+
+// ── TYPEWRITER HERO ─────────────────────────────────────────────────────
+const heroType = document.getElementById('hero-type');
+const phrases = ['Now it thinks.', 'Now it learns.', 'Now it acts.', 'Now it knows you.'];
+let pi = 0, ci = 0, del = false;
+function type() {
+  const p = phrases[pi];
+  heroType.textContent = del ? p.slice(0, --ci) : p.slice(0, ++ci);
+  let spd = del ? 45 : 90;
+  if (!del && ci === p.length) { del = true; spd = 2200; }
+  else if (del && ci === 0) { del = false; pi = (pi + 1) % phrases.length; spd = 400; }
+  setTimeout(type, spd);
+}
+type();
+
+// ── INTERSECTION OBSERVER (reveal) ──────────────────────────────────────
+const revObs = new IntersectionObserver(entries => {
+  entries.forEach(e => { if (e.isIntersecting) e.target.classList.add('in'); });
+}, { threshold: 0.12 });
+document.querySelectorAll('.reveal, .reveal-left, .reveal-right').forEach(el => revObs.observe(el));
+
+// ── CHAPTER 1 CURSOR ANIMATION ──────────────────────────────────────────
+const ch1c = document.getElementById('ch1-cursor');
+const ch1r = document.getElementById('ch1-ring');
+const ch1t = document.getElementById('ch1-trail');
+const waypoints = [ [20,20],[80,40],[50,60],[70,80],[30,50],[60,30] ];
+let wpIdx = 0;
+function animCh1() {
+  const [xp, yp] = waypoints[wpIdx];
+  ch1c.style.left = `${xp}%`; ch1c.style.top = `${yp}%`;
+  ch1r.style.left = `${xp}%`; ch1r.style.top = `${yp}%`;
+  // trail dot
+  const td = document.createElement('div');
+  td.style.cssText = `position:absolute;width:4px;height:4px;background:rgba(216,180,254,0.4);border-radius:50%;left:${xp}%;top:${yp}%;transform:translate(-50%,-50%);pointer-events:none;transition:opacity 2s;`;
+  ch1t.appendChild(td);
+  setTimeout(() => { td.style.opacity = '0'; setTimeout(() => td.remove(), 2000); }, 100);
+  wpIdx = (wpIdx + 1) % waypoints.length;
+  setTimeout(animCh1, 1200);
+}
+animCh1();
+
+// ── MINI KNOWLEDGE GRAPH (chapter 2) ────────────────────────────────────
+const mgCanvas = document.getElementById('mini-graph');
+const mgCtx = mgCanvas.getContext('2d');
+const mgLabels = ['Rust','Ownership','Borrowing','Balance Sheet','Variance','Q4 Review','Design','CSS','Typography'];
+let mgNodes = [];
+function initMG() {
+  mgCanvas.width  = mgCanvas.offsetWidth  * window.devicePixelRatio;
+  mgCanvas.height = mgCanvas.offsetHeight * window.devicePixelRatio;
+  mgCtx.scale(window.devicePixelRatio, window.devicePixelRatio);
+  const W = mgCanvas.offsetWidth, H = mgCanvas.offsetHeight;
+  mgNodes = mgLabels.map((label, i) => ({
+    x: 40 + Math.random() * (W - 80), y: 40 + Math.random() * (H - 80),
+    vx: (Math.random() - 0.5) * 0.4, vy: (Math.random() - 0.5) * 0.4,
+    r: 4 + Math.random() * 3, label,
+    pulse: 0, born: Date.now() + i * 300
+  }));
+}
+function drawMG() {
+  const W = mgCanvas.offsetWidth, H = mgCanvas.offsetHeight;
+  mgCtx.clearRect(0, 0, W, H);
+  const now = Date.now();
+  const visible = mgNodes.filter(n => now >= n.born);
+  // edges
+  for (let i = 0; i < visible.length; i++) {
+    for (let j = i+1; j < visible.length; j++) {
+      const a = visible[i], b = visible[j];
+      const d = Math.hypot(a.x - b.x, a.y - b.y);
+      if (d < 130) {
+        const alpha = (1 - d / 130) * 0.5;
+        mgCtx.beginPath();
+        mgCtx.moveTo(a.x, a.y); mgCtx.lineTo(b.x, b.y);
+        mgCtx.strokeStyle = `rgba(129,140,248,${alpha})`;
+        mgCtx.lineWidth = (1 - d / 130) * 1.5;
+        mgCtx.stroke();
+      }
+    }
+  }
+  // nodes
+  visible.forEach(n => {
+    n.x += n.vx; n.y += n.vy;
+    if (n.x < n.r || n.x > W - n.r) n.vx *= -1;
+    if (n.y < n.r || n.y > H - n.r) n.vy *= -1;
+    mgCtx.beginPath();
+    mgCtx.arc(n.x, n.y, n.r, 0, Math.PI*2);
+    mgCtx.fillStyle = 'rgba(216,180,254,0.85)';
+    mgCtx.shadowBlur = 8; mgCtx.shadowColor = 'rgba(129,140,248,0.6)';
+    mgCtx.fill(); mgCtx.shadowBlur = 0;
+    // label
+    mgCtx.font = '9px Fira Code, monospace';
+    mgCtx.fillStyle = 'rgba(148,163,184,0.7)';
+    mgCtx.fillText(n.label, n.x + n.r + 3, n.y + 3);
+  });
+  requestAnimationFrame(drawMG);
+}
+window.addEventListener('resize', initMG);
+initMG(); drawMG();
+
+// ── NOTIFICATION CARD (chapter 3) ───────────────────────────────────────
+const notifObs = new IntersectionObserver(entries => {
+  if (entries[0].isIntersecting) {
+    const card = document.getElementById('notif-card');
+    card.style.transform = 'translateY(0)'; card.style.opacity = '1';
+  }
+}, { threshold: 0.4 });
+notifObs.observe(document.getElementById('notif-card'));
+
+// ── TRAINING PROGRESS (chapter 4) ───────────────────────────────────────
+const trainObs = new IntersectionObserver(entries => {
+  if (entries[0].isIntersecting) {
+    const bar = document.getElementById('train-bar');
+    const lbl = document.getElementById('train-label');
+    const steps = [
+      { w: '30%', l: 'Analyzing patterns...', t: 't1' },
+      { w: '60%', l: 'Building knowledge graph...', t: 't2' },
+      { w: '85%', l: 'Calibrating workflows...', t: 't3' },
+      { w: '100%', l: '✓ Your model is ready.', t: 't4' },
+    ];
+    steps.forEach((s, i) => {
+      setTimeout(() => {
+        bar.style.width = s.w;
+        lbl.textContent = s.l;
+        if (s.t) document.getElementById(s.t).style.opacity = '1';
+      }, i * 800);
+    });
+  }
+}, { threshold: 0.5 });
+trainObs.observe(document.getElementById('train-bar'));
+
+// ── KNOWLEDGE GRAPH CANVAS ───────────────────────────────────────────────
+const kgEl = document.getElementById('kgraph');
+const kgCtx = kgEl.getContext('2d');
+let kgNodes = [], kgMx = -999, kgMy = -999;
+function initKG() {
+  kgEl.width  = kgEl.offsetWidth  * devicePixelRatio;
+  kgEl.height = kgEl.offsetHeight * devicePixelRatio;
+  kgCtx.scale(devicePixelRatio, devicePixelRatio);
+  const W = kgEl.offsetWidth, H = kgEl.offsetHeight;
+  kgNodes = Array.from({length:45}, () => ({
+    x: Math.random()*W, y: Math.random()*H,
+    vx: (Math.random()-.5)*.45, vy: (Math.random()-.5)*.45,
+    r: Math.random()*3.5+1.5, lit: false
+  }));
+}
+kgEl.addEventListener('mousemove', e => {
+  const rect = kgEl.getBoundingClientRect();
+  kgMx = e.clientX - rect.left; kgMy = e.clientY - rect.top;
+});
+kgEl.addEventListener('mouseleave', () => { kgMx = -999; kgMy = -999; });
+function drawKG() {
+  const W = kgEl.offsetWidth, H = kgEl.offsetHeight;
+  kgCtx.clearRect(0, 0, W, H);
+  // find nearest to mouse
+  let nearIdx = -1, nearDist = 80;
+  kgNodes.forEach((n, i) => {
+    const d = Math.hypot(n.x - kgMx, n.y - kgMy);
+    if (d < nearDist) { nearDist = d; nearIdx = i; }
+  });
+  kgNodes.forEach((n, i) => {
+    n.x += n.vx; n.y += n.vy;
+    if (n.x < n.r || n.x > W - n.r) n.vx *= -1;
+    if (n.y < n.r || n.y > H - n.r) n.vy *= -1;
+    const isNear = (i === nearIdx);
+    for (let j = i+1; j < kgNodes.length; j++) {
+      const o = kgNodes[j], d = Math.hypot(n.x - o.x, n.y - o.y);
+      if (d < 140) {
+        const alpha = isNear || j === nearIdx ? 0.6 : (1 - d/140) * 0.25;
+        kgCtx.beginPath(); kgCtx.moveTo(n.x, n.y); kgCtx.lineTo(o.x, o.y);
+        kgCtx.strokeStyle = `rgba(129,140,248,${alpha})`;
+        kgCtx.lineWidth = isNear ? 1.5 : (1 - d/140);
+        kgCtx.stroke();
+      }
+    }
+    const nr = isNear ? n.r * 2.5 : n.r;
+    kgCtx.beginPath(); kgCtx.arc(n.x, n.y, nr, 0, Math.PI*2);
+    kgCtx.fillStyle = isNear ? 'rgba(216,180,254,1)' : 'rgba(216,180,254,0.7)';
+    kgCtx.shadowBlur = isNear ? 16 : 6;
+    kgCtx.shadowColor = isNear ? 'rgba(216,180,254,0.8)' : 'rgba(129,140,248,0.5)';
+    kgCtx.fill(); kgCtx.shadowBlur = 0;
+  });
+  requestAnimationFrame(drawKG);
+}
+window.addEventListener('resize', initKG);
+initKG(); drawKG();
+
+// ── STATS COUNTER ────────────────────────────────────────────────────────
+function animCount(el, target, dur) {
+  const start = Date.now();
+  const tick = () => {
+    const p = Math.min((Date.now() - start) / dur, 1);
+    el.textContent = Math.floor(p * target).toLocaleString();
+    if (p < 1) requestAnimationFrame(tick);
+  };
+  requestAnimationFrame(tick);
+}
+const statsObs = new IntersectionObserver(entries => {
+  if (entries[0].isIntersecting) {
+    animCount(document.getElementById('stat1'), 847, 1800);
+    animCount(document.getElementById('stat2'), 2341, 2200);
+    animCount(document.getElementById('stat3'), 14, 1200);
+    statsObs.disconnect();
+  }
+}, { threshold: 0.5 });
+statsObs.observe(document.getElementById('kgraph'));
+
+// ── TRAINING LOOP ANIMATION ──────────────────────────────────────────────
+const loopObs = new IntersectionObserver(entries => {
+  if (entries[0].isIntersecting) {
+    const nodes = document.querySelectorAll('.loop-node');
+    const conns = document.querySelectorAll('.loop-connector');
+    nodes.forEach((n, i) => setTimeout(() => n.classList.add('lit'), i * 400));
+    conns.forEach((c, i) => setTimeout(() => c.classList.add('lit'), i * 400 + 300));
+    loopObs.disconnect();
+  }
+}, { threshold: 0.4 });
+loopObs.observe(document.getElementById('loop-diagram'));
+
+// ── ROADMAP ──────────────────────────────────────────────────────────────
+const ROADMAP = {
+  learner: {
+    color: '#818CF8',
+    steps: [
+      { day: 'DAY 1',  badge: 'OBSERVING',   title: 'Silent start',          desc: 'You open docs, YouTube, Stack Overflow. BashIn begins silent observation — no interruptions.', activity: '→ cursor.watch("tabs", "scroll_depth", "revisit_rate")' },
+      { day: 'DAY 3',  badge: 'PATTERN',     title: 'Learning style detected', desc: 'You re-read syntax examples 3× before it clicks. Visual learner profile confirmed.', activity: '→ graph.add_node("visual_learner", confidence=0.87)' },
+      { day: 'DAY 7',  badge: 'PREDICTING',  title: 'One step ahead',        desc: 'Before you open the docs, BashIn surfaces the exact example you need — already highlighted.', activity: '→ surface("syntax_examples") before query_detected' },
+      { day: 'DAY 14', badge: 'ADAPTING',    title: 'Graph taking shape',    desc: 'Knowledge graph: 40+ nodes, 120+ connections. Gaps identified. Study plan auto-adjusted.', activity: '→ graph.nodes=42  connections=118  gaps=["async","closures"]' },
+      { day: 'DAY 30', badge: 'PERSONALISED',title: 'Knows you better than your notes', desc: 'Sessions paced to your rhythm. Resources curated. Retention tracking active.', activity: '→ model.fine_tuned = true  accuracy=94%' },
+    ]
+  },
+  developer: {
+    color: '#34d399',
+    steps: [
+      { day: 'DAY 1',  badge: 'MAPPING',     title: 'Workspace indexed',     desc: 'IDE layout, file structure, stack, and frequent error patterns — all silently logged.', activity: '→ index("workspace", stack="Next.js+Rust", errors=[])'  },
+      { day: 'DAY 3',  badge: 'FLAGGING',    title: 'Error patterns caught', desc: 'Recurring mistakes flagged before they compile. Missing imports predicted inline.', activity: '→ flag("null_check_missing", file="auth.ts", line=42)' },
+      { day: 'DAY 7',  badge: 'SUGGESTING',  title: 'Writing in your style', desc: 'Code suggestions match your naming conventions, comment style, and architecture choices.', activity: '→ suggest(style=your_conventions, context="last_30_commits")' },
+      { day: 'DAY 14', badge: 'CHECKLIST',   title: 'Production gap detected', desc: 'BashIn tells you exactly what is missing before your PR is production-ready.', activity: '→ blockers=["rate_limit","env_validation","error_boundary"]' },
+      { day: 'DAY 30', badge: 'PAIR PILOT',  title: 'Your silent co-author', desc: 'Anticipates refactors, architecture changes, and tech debt before you notice them.', activity: '→ model.role = "senior_pair_programmer"  trust=high' },
+    ]
+  },
+  company: {
+    color: '#60a5fa',
+    steps: [
+      { day: 'DAY 1',  badge: 'INDEXING',    title: 'Data landscape mapped', desc: 'Sheets, columns, ticket boards, payment flows — all indexed without a single manual tag.', activity: '→ index("sheets", "tickets", "payment_flows")' },
+      { day: 'DAY 3',  badge: 'TRACKING',    title: 'Update patterns known', desc: 'BashIn knows which sheets change, when, and what triggers the change.', activity: '→ watch("Q3_revenue.xlsx", trigger="eod", freq="daily")' },
+      { day: 'DAY 7',  badge: 'GENERATING',  title: 'Structures built auto', desc: 'Required sheet structures — including payment tables — generated without manual setup.', activity: '→ create_structure("payment_sheet", columns=inferred)' },
+      { day: 'DAY 14', badge: 'VERIFYING',   title: 'Tickets verified live', desc: 'Service tickets cross-checked against requirements. Missing fulfilments flagged instantly.', activity: '→ ticket.check_requirements()  missing=["SLA_sign_off"]' },
+      { day: 'DAY 30', badge: 'AUTOMATED',   title: 'Zero manual overhead', desc: 'Reporting, sheet maintenance, ticket routing — all running without anyone asking.', activity: '→ operations.status = "autonomous"  saved=12h/week' },
+    ]
+  },
+  creative: {
+    color: '#f472b6',
+    steps: [
+      { day: 'DAY 1',  badge: 'FINGERPRINT', title: 'Creative style observed', desc: 'Tools you use, files you open, how you move from idea to execution — all quietly mapped.', activity: '→ profile("creative_style", tools=["Figma","Notion","Ableton"])' },
+      { day: 'DAY 3',  badge: 'MAPPING',     title: 'Workflow understood',   desc: 'BashIn knows your idea-to-output loop — and where you get stuck every time.', activity: '→ bottleneck_detected("reference_gathering", avg_time=47min)' },
+      { day: 'DAY 7',  badge: 'FLOWING',     title: 'Friction removed',      desc: 'References pre-loaded. Repetitive steps automated. Your flow state protected.', activity: '→ automate("moodboard_collection", trigger="new_project")' },
+      { day: 'DAY 14', badge: 'AMENDING',    title: 'Improvements suggested', desc: 'Ongoing projects get live amendment suggestions based on your aesthetic direction.', activity: '→ suggest("contrast_ratio", "spacing_consistency", project="brand_v2")' },
+      { day: 'DAY 30', badge: 'VISIONARY',   title: 'Ideas before you ask',  desc: 'BashIn proposes next project directions built from your creative DNA.', activity: '→ generate("project_brief", based_on=your_portfolio_dna)' },
+    ]
+  },
+  gamer: {
+    color: '#fbbf24',
+    steps: [
+      { day: 'DAY 1',  badge: 'WATCHING',    title: 'Playstyle logged',      desc: 'Input patterns, reaction windows, preferred roles, game selection — all quietly noted.', activity: '→ log("inputs", "reaction_ms", "role_preference", "win_rate")' },
+      { day: 'DAY 3',  badge: 'PATTERN',     title: 'Habits and gaps found', desc: 'Go-to strategies mapped. Weak points in reaction time or positioning surfaced.', activity: '→ weakness_detected("late_rotation", "positioning_under_pressure")' },
+      { day: 'DAY 7',  badge: 'COACHING',    title: 'Hints in your style',   desc: 'In-session tips appear at the right moment — tuned to your playstyle, not generic advice.', activity: '→ hint("rotate_early", trigger="mid_game_stall", style=yours)' },
+      { day: 'DAY 14', badge: 'TRACKING',    title: 'Performance graphed',   desc: 'Session-by-session improvement logged. Peaks, slumps, and tilt patterns visible.', activity: '→ chart("kda_trend", "win_rate_delta", "tilt_sessions")' },
+      { day: 'DAY 30', badge: 'CO-PILOT',    title: 'Moves before you make them', desc: 'BashIn anticipates your next decision and fills gaps before you notice the miss.', activity: '→ model.role = "co_pilot"  prediction_accuracy=91%' },
+    ]
+  }
+};
+
+let rmTimer = null;
+let rmStep  = 0;
+let rmActive = 'learner';
+
+function buildRoadmap(key) {
+  const data  = ROADMAP[key];
+  const color = data.color;
+  const wrap  = document.getElementById('roadmap-wrap');
+  wrap.innerHTML = `
+    <div class="rm-track" style="--rc:${color};">
+      <div class="rm-fill" id="rm-fill"></div>
+      ${data.steps.map((s, i) => `
+        <div class="rm-node" data-step="${i}">
+          <div class="rm-dot-wrap">
+            <div class="rm-dot"></div>
+            <div class="rm-day">${s.day}</div>
+          </div>
+          <div class="rm-card">
+            <div class="rm-card-top">
+              <span class="rm-badge">${s.badge}</span>
+              <span class="rm-title">${s.title}</span>
+            </div>
+            <div class="rm-desc">${s.desc}</div>
+            <div class="rm-activity">${s.activity}</div>
+          </div>
+        </div>
+      `).join('')}
+    </div>`;
+}
+
+function runRoadmap(startStep) {
+  clearInterval(rmTimer);
+  rmStep = startStep ?? 0;
+  const nodes = document.querySelectorAll('.rm-node');
+  const fill  = document.getElementById('rm-fill');
+  nodes.forEach(n => n.classList.remove('lit','current'));
+  if (fill) fill.style.height = '0%';
+
+  function activate(i) {
+    if (i >= nodes.length) { clearInterval(rmTimer); return; }
+    nodes.forEach(n => n.classList.remove('current'));
+    nodes[i].classList.add('lit','current');
+    // fill line proportionally
+    const pct = nodes.length > 1 ? (i / (nodes.length - 1)) * 100 : 100;
+    if (fill) fill.style.height = pct + '%';
+  }
+
+  activate(rmStep);
+  rmTimer = setInterval(() => {
+    rmStep++;
+    if (rmStep >= nodes.length) { clearInterval(rmTimer); return; }
+    activate(rmStep);
+  }, 1800);
+}
+
+function switchTab(key) {
+  rmActive = key;
+  document.querySelectorAll('.rtab').forEach(b => {
+    b.classList.toggle('active', b.dataset.tab === key);
+  });
+  buildRoadmap(key);
+  runRoadmap(0);
+}
+
+document.querySelectorAll('.rtab').forEach(btn => {
+  btn.addEventListener('click', () => switchTab(btn.dataset.tab));
+});
+
+// init
+buildRoadmap('learner');
+const rmObs = new IntersectionObserver(entries => {
+  if (entries[0].isIntersecting) { runRoadmap(0); rmObs.disconnect(); }
+}, { threshold: 0.2 });
+rmObs.observe(document.getElementById('roadmap-wrap'));
+
+// ── WAITLIST CONFETTI ────────────────────────────────────────────────────
+document.getElementById('waitlist-form').addEventListener('submit', e => {
+  e.preventDefault();
+  const btn = e.target.querySelector('button');
+  btn.textContent = '✓ Welcome Aboard!';
+  btn.style.background = 'linear-gradient(135deg,#059669,#10b981)';
+  for (let i = 0; i < 48; i++) {
+    const p = document.createElement('div');
+    const colors = ['#7c3aed','#818CF8','#D8B4FE','#f59e0b','#10b981','#f1f5f9'];
+    p.style.cssText = `position:fixed;left:50%;top:50%;pointer-events:none;width:8px;height:8px;border-radius:${Math.random()>0.5?'50%':'2px'};background:${colors[Math.floor(Math.random()*colors.length)]};z-index:9999;`;
+    document.body.appendChild(p);
+    const a = Math.random() * Math.PI * 2, d = 80 + Math.random() * 220;
+    p.animate([
+      {transform:`translate(-50%,-50%) scale(1)`, opacity:1},
+      {transform:`translate(calc(-50% + ${Math.cos(a)*d}px), calc(-50% + ${Math.sin(a)*d}px)) scale(0)`, opacity:0}
+    ], {duration:900+Math.random()*600, easing:'ease-out'}).onfinish = () => p.remove();
+  }
+});
+</script>
+</body>
+</html>

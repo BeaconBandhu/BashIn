@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Secrets
+cursor-overlay/config.json
+
+# Logs & runtime output
+*.log
+cursor-overlay/out.log
+cursor-overlay/err.log
+mesh-ai/backend/startup.log
+mesh-ai/backend/startup_err.log
+mesh-ai/backend/startup_out.log
+
+# Screenshots / temp
+screen.png
+
+# Memory / IDE
+.claude/
+
+# Binaries
+cloudflared.exe
+
+# Media not needed in repo
+"WhatsApp Image 2026-05-22 at 6.36.44 AM.jpeg"

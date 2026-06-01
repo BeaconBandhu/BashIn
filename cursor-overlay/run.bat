@@ -1,2 +1,2 @@
 @echo off
-py -3.11 "%~dp0overlay.py"
+python "%~dp0main.py"
