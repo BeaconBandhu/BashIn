@@ -277,36 +277,34 @@ def swiggy_agent(params: dict, client: OpenAI) -> str:
                 return "Swiggy needs you to be signed in. Please log in and try again."
 
             # ── Find and click ADD ────────────────────────────────────────────
-            pos = find_element("the first ADD button in the Swiggy product listing", client)
+            # The + button is a small square at the top-right corner of each product card
+            pos = find_element(
+                "the blue outlined plus (+) button at the top-right corner of the first product card", client)
             if not pos:
                 logging.warning("swiggy: ADD button not found attempt %d", attempt)
                 continue
 
-            # Hover first (some React buttons need mouseover to activate)
+            # Hover then click (React buttons sometimes need mouseover)
             pyautogui.moveTo(*pos, duration=0.15); time.sleep(0.2)
             pyautogui.click(*pos)
-            time.sleep(2.5)   # give Swiggy time to update cart state
+            time.sleep(2.5)
 
-            # ── Detect post-click state ───────────────────────────────────────
+            # Login modal check
             if verify("Swiggy login or sign-in modal appeared", client):
-                return "Swiggy is asking you to sign in before adding to cart. Please log in and try again."
+                return "Swiggy is asking you to sign in. Please log in and try again."
 
-            added = (
-                verify("quantity selector with minus and plus buttons on Swiggy", client)
-                or verify("View Cart button appeared with item count on Swiggy", client)
-            )
-            if not added:
-                logging.warning("swiggy: ADD did not update cart attempt %d", attempt)
+            # ── "Go to Cart" bar appears at the bottom when an item is in cart ─
+            # Don't rely on verify("cart updated") — just look for the bar directly
+            pos_cart = find_element(
+                "'Go to Cart' button in the sticky bottom bar on Swiggy Instamart", client)
+            if not pos_cart:
+                logging.warning("swiggy: Go to Cart bar not found attempt %d — item not added", attempt)
                 continue
 
-            logging.info("swiggy: item added confirmed")
+            logging.info("swiggy: item added — Go to Cart bar found")
 
             # ── Open cart ─────────────────────────────────────────────────────
-            pos_cart = find_element("View Cart button at the bottom of the screen on Swiggy", client)
-            if pos_cart:
-                pyautogui.click(*pos_cart); time.sleep(2.0)
-            else:
-                _navigate_chrome("https://www.swiggy.com/instamart/cart"); time.sleep(3.0)
+            pyautogui.click(*pos_cart); time.sleep(2.0)
 
             if not verify("Swiggy cart page showing items ready for checkout", client):
                 continue
