@@ -16,6 +16,11 @@ mesh-ai/backend/startup_out.log
 
 # Screenshots / temp
 screen.png
+cursor-overlay/swiggy_debug.png
+cursor-overlay/calendar_debug.png
+
+# BashIn automation Chrome profile — holds login cookies, NEVER commit
+cursor-overlay/chrome_bashin_profile/
 
 # Memory / IDE
 .claude/

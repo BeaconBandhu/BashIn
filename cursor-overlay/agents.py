@@ -1,26 +1,35 @@
 """
 Multi-agent orchestrator for BashIn.
 
+Web agents (Swiggy, Calendar) drive a real, logged-in Chrome through Playwright
+(see browser.py) — real DOM clicks and real cart/URL state, NO screenshots and
+NO coordinate guessing. Spotify stays on the desktop app via pyautogui.
+
 Flow per command:
   1. Regex intent detection   — instant, no LLM
-  2. gpt-4o-mini param extract — parallel with first action step
-  3. Specialist agent executes — pyautogui steps
-  4. Screenshot verify each    — gpt-4o-mini low-detail, ~300ms
-  5. Retry up to MAX_RETRIES   — on any verification failure
-  6. Speak real success/failure — never claims success without screenshot proof
+  2. gpt-4o-mini param extract — song/product/event + qty/time
+  3. Specialist agent executes — Playwright (web) or pyautogui (Spotify)
+  4. Deterministic verification — DOM selectors / URL, not vision
+  5. Honest success/failure    — never claims success it can't observe
 """
-import re, time, json, logging, os, subprocess, datetime, ctypes
+import re, time, json, logging, os, subprocess, datetime
 from urllib.parse import quote
 import pyautogui
 from openai import OpenAI
-from screen import capture_screen
+
+from constants import BASE_DIR
+from screen    import capture_screen
+from browser   import BROWSER
 
 MAX_RETRIES = 3
-CHROME  = r"C:\Program Files\Google\Chrome\Application\chrome.exe"
 SPOTIFY = r"C:\Users\User\AppData\Roaming\Spotify\Spotify.exe"
 
 pyautogui.FAILSAFE = True
 pyautogui.PAUSE    = 0.04
+
+# Where Playwright dumps a screenshot when a selector can't be found (for debugging)
+SWIGGY_DEBUG_PNG   = os.path.join(BASE_DIR, "swiggy_debug.png")
+CALENDAR_DEBUG_PNG = os.path.join(BASE_DIR, "calendar_debug.png")
 
 # ── Multi-turn pending state ───────────────────────────────────────────────────
 _pending: dict = {}
@@ -71,7 +80,7 @@ def extract_params(intent: str, text: str, client: OpenAI) -> dict:
         return {}
 
 
-# ── Screenshot verification (gpt-4o-mini low-detail, ~300ms) ──────────────────
+# ── Screenshot verification (used only by Spotify desktop app) ────────────────
 def verify(expected: str, client: OpenAI) -> bool:
     try:
         b64, *_ = capture_screen()
@@ -93,114 +102,7 @@ def verify(expected: str, client: OpenAI) -> bool:
         return False
 
 
-# ── Vision element finder (gpt-4o high-detail, returns screen coords) ─────────
-def find_element(description: str, client: OpenAI):
-    try:
-        b64, xs, ys, iw, ih, sw, sh = capture_screen()
-        r = client.chat.completions.create(
-            model="gpt-4o",
-            messages=[{"role": "user", "content": [
-                {"type": "image_url",
-                 "image_url": {"url": f"data:image/jpeg;base64,{b64}", "detail": "high"}},
-                {"type": "text", "text": (
-                    f"Find the center of '{description}' in this {iw}x{ih} image. "
-                    f"Return JSON: {{\"x\":<int_image_x>,\"y\":<int_image_y>}}. "
-                    f"Return {{\"x\":null,\"y\":null}} if not visible."
-                )},
-            ]}],
-            response_format={"type": "json_object"},
-            max_tokens=40,
-        )
-        d = json.loads(r.choices[0].message.content)
-        if d.get("x") is None:
-            return None
-        sx, sy = int(d["x"] * xs), int(d["y"] * ys)
-        logging.info("find_element(%r) → (%d, %d)", description, sx, sy)
-        return sx, sy
-    except Exception as e:
-        logging.error("find_element(%r): %s", description, e)
-        return None
-
-
-# ── Helpers ────────────────────────────────────────────────────────────────────
-def _speak_async(text: str, client: OpenAI):
-    import sounddevice as sd, numpy as np
-    try:
-        tts = client.audio.speech.create(
-            model="tts-1", voice="alloy", input=text, response_format="pcm")
-        pcm = np.frombuffer(tts.content, dtype=np.int16).astype(np.float32) / 32768.0
-        sd.play(pcm, samplerate=24000); sd.wait()
-    except Exception as e:
-        logging.error("_speak_async: %s", e)
-
-# Hold a module-level reference so the GC doesn't collect the callback mid-enumeration
-_WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_size_t, ctypes.c_size_t)
-
-def _bring_chrome_to_front() -> bool:
-    """Force Chrome to foreground using AttachThreadInput (works on Win10/11)."""
-    u32   = ctypes.windll.user32
-    found = [0]
-
-    def _cb(hwnd, _):
-        cls = ctypes.create_unicode_buffer(64)
-        u32.GetClassNameW(hwnd, cls, 64)
-        if cls.value == "Chrome_WidgetWin_1" and u32.IsWindowVisible(hwnd):
-            found[0] = hwnd
-        return True
-
-    cb = _WNDENUMPROC(_cb)
-    u32.EnumWindows(cb, 0)
-    hwnd = found[0]
-    if not hwnd:
-        logging.warning("_bring_chrome_to_front: no Chrome window found")
-        return False
-
-    u32.ShowWindow(hwnd, 9)          # SW_RESTORE — unminimise if needed
-    u32.BringWindowToTop(hwnd)
-
-    fg_hwnd    = u32.GetForegroundWindow()
-    tid_fg     = u32.GetWindowThreadProcessId(fg_hwnd, None)
-    tid_chrome = u32.GetWindowThreadProcessId(hwnd,    None)
-
-    # AttachThreadInput lets us steal focus even on Win10/11 focus-theft protection
-    if tid_fg != tid_chrome:
-        u32.AttachThreadInput(tid_fg, tid_chrome, True)
-        u32.SetForegroundWindow(hwnd)
-        u32.AttachThreadInput(tid_fg, tid_chrome, False)
-    else:
-        u32.SetForegroundWindow(hwnd)
-
-    time.sleep(0.3)
-    return True
-
-def _open_chrome(url: str):
-    """Open URL in Chrome as a new tab, then force Chrome to the foreground."""
-    # No --new-window: Chrome opens the URL as a new tab in the existing window
-    subprocess.Popen([CHROME, url])
-    time.sleep(1.5)
-    _bring_chrome_to_front()
-    time.sleep(0.3)
-
-def _navigate_chrome(url: str):
-    """Navigate the current Chrome window to url via the address bar."""
-    _bring_chrome_to_front()
-    time.sleep(0.2)
-    pyautogui.hotkey("ctrl", "l"); time.sleep(0.25)
-    pyautogui.hotkey("ctrl", "a")
-    pyautogui.write(url, interval=0.02)
-    pyautogui.press("enter")
-
-def _wait_page(expected: str, client: OpenAI, timeout: float = 12.0) -> bool:
-    """Poll verify every ~1s until True or timeout expires."""
-    t0 = time.monotonic()
-    while time.monotonic() - t0 < timeout:
-        if verify(expected, client):
-            return True
-        time.sleep(0.8)
-    return False
-
-
-# ── Spotify Agent ─────────────────────────────────────────────────────────────
+# ── Spotify Agent (desktop app, pyautogui — already reliable) ─────────────────
 def spotify_agent(params: dict, client: OpenAI) -> str:
     song   = params.get("song", "").strip()
     artist = params.get("artist", "").strip()
@@ -211,150 +113,199 @@ def spotify_agent(params: dict, client: OpenAI) -> str:
     for attempt in range(MAX_RETRIES):
         try:
             logging.info("spotify attempt %d: %r", attempt, query)
-
             if os.path.exists(SPOTIFY):
                 subprocess.Popen([SPOTIFY])
             else:
-                pyautogui.hotkey("win", "s")
-                time.sleep(0.2)
-                pyautogui.write("Spotify", interval=0.04)
-                pyautogui.press("enter")
+                pyautogui.hotkey("win", "s"); time.sleep(0.2)
+                pyautogui.write("Spotify", interval=0.04); pyautogui.press("enter")
 
             time.sleep(2.0)
             pyautogui.hotkey("ctrl", "k"); time.sleep(0.25)
             pyautogui.hotkey("ctrl", "a")
-            pyautogui.write(query, interval=0.03)
-            time.sleep(0.5)
-            pyautogui.press("enter")
-            time.sleep(1.2)
+            pyautogui.write(query, interval=0.03); time.sleep(0.5)
+            pyautogui.press("enter"); time.sleep(1.2)
 
             if verify(f"Spotify showing search results or now playing {song}", client):
                 pyautogui.press("enter"); time.sleep(0.5)
                 return f"Playing {query} on Spotify."
-
             logging.warning("spotify verify failed attempt %d", attempt)
-
         except Exception as e:
             logging.error("spotify attempt %d: %s", attempt, e)
         time.sleep(0.3)
-
     return f"Couldn't verify Spotify opened {query} after {MAX_RETRIES} tries."
 
 
-# ── Swiggy Instamart Agent ────────────────────────────────────────────────────
+# ── Swiggy Instamart Agent (Playwright, real DOM — selectors verified live) ───
+# Discovered via DOM probe on the live site:
+#   add button   → [data-testid="buttonpair-add"]   (an SVG "+" icon, no text)
+#   cart bar     → [data-testid="veiwcartbar-container"]   (Swiggy's own typo)
+#   variant modal→ aria-label "Please select variant of ..." / "Items list"
+#   variant add  → [aria-label="Add 1 item to cart"]
+#   close modal  → [aria-label="Close overlay"]
+_SW_ADD      = '[data-testid="buttonpair-add"]'
+_SW_CARTBAR  = '[data-testid="veiwcartbar-container"]'
+_SW_OVERLAY  = '[aria-label^="Please select variant"], [aria-label="Items list"]'
+_SW_VAR_ADD  = '[aria-label="Add 1 item to cart"]'
+_SW_CLOSE_OV = '[aria-label="Close overlay"]'
+
+
 def swiggy_agent(params: dict, client: OpenAI) -> str:
-    """Add item to cart, open cart for review, then ask before checkout."""
     product = params.get("product", "").strip()
     qty     = int(params.get("quantity", 1))
     if not product:
         return "What should I order from Swiggy Instamart?"
 
-    search_url = f"https://www.swiggy.com/instamart/search?custom_back=true&query={quote(product)}"
+    search_url = (f"https://www.swiggy.com/instamart/search"
+                  f"?custom_back=true&query={quote(product)}")
 
-    for attempt in range(MAX_RETRIES):
+    def task(page):
+        page.bring_to_front()
+        page.goto(search_url, wait_until="domcontentloaded", timeout=30000)
+
+        # Wait for product add buttons to render
         try:
-            logging.info("swiggy attempt %d: %r", attempt, product)
+            page.wait_for_selector(_SW_ADD, timeout=15000)
+        except Exception:
+            page.screenshot(path=SWIGGY_DEBUG_PNG)
+            low = (page.content() or "").lower()
+            logging.warning("swiggy: no products. title=%r url=%s",
+                            page.title(), page.url)
+            if "log in" in low or "sign in" in low or "login" in low:
+                return "LOGIN"
+            return "NOPRODUCTS"
 
-            # ── Navigate ─────────────────────────────────────────────────────
-            if attempt == 0:
-                _open_chrome(search_url)       # new tab + force Chrome to front
-            else:
-                _navigate_chrome(search_url)   # reuse existing window
+        # Click the first product's "+" add control
+        page.locator(_SW_ADD).first.scroll_into_view_if_needed()
+        page.locator(_SW_ADD).first.click()
+        page.wait_for_timeout(1200)
 
-            # ── Wait for products to appear (up to 12 s) ─────────────────────
-            if not _wait_page("Swiggy Instamart product listing or search results", client, timeout=12.0):
-                logging.warning("swiggy: page not ready attempt %d", attempt)
-                # Try one more time after dismissing any modal
-                pyautogui.press("escape"); time.sleep(1.0)
-                if not verify("Swiggy Instamart product listing or search results", client):
-                    continue
+        # Multi-variant products pop a "select variant" overlay — pick a variant
+        if page.locator(_SW_OVERLAY).count():
+            logging.info("swiggy: variant overlay — selecting a variant")
+            va = page.locator(_SW_VAR_ADD)
+            if not va.count():
+                page.screenshot(path=SWIGGY_DEBUG_PNG)
+                return "NOVARIANT"
+            va.first.click()                                  # adds the variant
+            for _ in range(max(0, qty - 1)):                  # bump to requested qty
+                page.wait_for_timeout(450)
+                inc = page.locator(_SW_VAR_ADD)
+                (inc.first if inc.count() else va.first).click()
+            if page.locator(_SW_CLOSE_OV).count():
+                page.locator(_SW_CLOSE_OV).first.click()
+                page.wait_for_timeout(600)
+        else:
+            # Single-variant product — clicking the same control increments qty
+            for _ in range(max(0, qty - 1)):
+                page.wait_for_timeout(400)
+                page.locator(_SW_ADD).first.click()
 
-            # Dismiss any overlay before interacting
-            pyautogui.press("escape"); time.sleep(0.4)
+        # Confirm the cart bar shows an item count
+        bar = page.locator(_SW_CARTBAR)
+        try:
+            bar.first.wait_for(state="visible", timeout=6000)
+        except Exception:
+            page.screenshot(path=SWIGGY_DEBUG_PNG)
+            return "NOCART"
+        bar_text = bar.first.inner_text()
+        if not re.search(r"\bitem", bar_text, re.I):
+            page.screenshot(path=SWIGGY_DEBUG_PNG)
+            logging.warning("swiggy: cart bar has no item count: %r", bar_text)
+            return "NOCART"
+        logging.info("swiggy: cart = %r", bar_text.replace("\n", " | ")[:120])
 
-            # Login wall — tell user instead of looping
-            if verify("Swiggy login or sign in page or modal", client):
-                return "Swiggy needs you to be signed in. Please log in and try again."
+        # Open the cart for review
+        try:
+            page.get_by_text("Go to Cart", exact=False).first.click(timeout=4000)
+            page.wait_for_load_state("domcontentloaded")
+            page.wait_for_timeout(1500)
+        except Exception:
+            logging.warning("swiggy: couldn't click Go to Cart; leaving on results")
+        return "OK"
 
-            # ── Find and click ADD ────────────────────────────────────────────
-            # The + button is a small square at the top-right corner of each product card
-            pos = find_element(
-                "the blue outlined plus (+) button at the top-right corner of the first product card", client)
-            if not pos:
-                logging.warning("swiggy: ADD button not found attempt %d", attempt)
-                continue
+    try:
+        res = BROWSER.submit(task, timeout=80)
+    except RuntimeError as e:
+        if "Playwright not available" in str(e):
+            return ("Playwright isn't installed yet. Open a terminal and run: "
+                    "pip install playwright")
+        return f"Browser error on Swiggy: {str(e)[:120]}"
+    except Exception as e:
+        logging.error("swiggy: %s", e)
+        return f"I hit an error driving Chrome for Swiggy: {str(e)[:120]}"
 
-            # Hover then click (React buttons sometimes need mouseover)
-            pyautogui.moveTo(*pos, duration=0.15); time.sleep(0.2)
-            pyautogui.click(*pos)
-            time.sleep(2.5)
+    if res == "LOGIN":
+        return ("The BashIn Chrome window isn't logged into Swiggy yet. I've opened it — "
+                "please log in once, then ask me again.")
+    if res == "NOPRODUCTS":
+        return (f"I opened Swiggy but couldn't see any products for {product} — most likely "
+                f"the delivery location isn't set in the BashIn Chrome window. Set it once, "
+                f"then ask again.")
+    if res == "NOVARIANT":
+        return f"A variant picker opened for {product} but I couldn't select a size."
+    if res == "NOCART":
+        return f"I clicked add for {product} but couldn't confirm the cart updated."
+    if res != "OK":
+        return f"I couldn't add {product} to the Swiggy cart."
 
-            # Login modal check
-            if verify("Swiggy login or sign-in modal appeared", client):
-                return "Swiggy is asking you to sign in. Please log in and try again."
-
-            # ── "Go to Cart" bar appears at the bottom when an item is in cart ─
-            # Don't rely on verify("cart updated") — just look for the bar directly
-            pos_cart = find_element(
-                "'Go to Cart' button in the sticky bottom bar on Swiggy Instamart", client)
-            if not pos_cart:
-                logging.warning("swiggy: Go to Cart bar not found attempt %d — item not added", attempt)
-                continue
-
-            logging.info("swiggy: item added — Go to Cart bar found")
-
-            # ── Open cart ─────────────────────────────────────────────────────
-            pyautogui.click(*pos_cart); time.sleep(2.0)
-
-            if not verify("Swiggy cart page showing items ready for checkout", client):
-                continue
-
-            # ── Stop — ask user before touching payment ───────────────────────
-            _pending["swiggy_checkout"] = {"product": product, "qty": qty}
-            qty_str = f"{qty}x " if qty > 1 else ""
-            return (f"Added {qty_str}{product} to your cart and opened the cart. "
-                    f"Say 'proceed to checkout' to pay with Amazon Pay, or 'cancel' to stop.")
-
-        except Exception as e:
-            logging.error("swiggy attempt %d: %s", attempt, e)
-        time.sleep(0.5)
-
-    return f"Couldn't add {product} to the Swiggy cart after {MAX_RETRIES} attempts."
+    _pending["swiggy_checkout"] = {"product": product, "qty": qty}
+    qty_str = f"{qty}x " if qty > 1 else ""
+    return (f"Added {qty_str}{product} to your cart and opened it for review. "
+            f"Say 'proceed to checkout' to pay with Amazon Pay, or 'cancel' to stop.")
 
 
 def swiggy_checkout(product: str, client: OpenAI) -> str:
-    """Checkout with Amazon Pay — only called after user confirms."""
-    for attempt in range(MAX_RETRIES):
-        try:
-            logging.info("swiggy_checkout attempt %d", attempt)
+    """Best-effort checkout with Amazon Pay. Reports honestly; never fakes success."""
+    def task(page):
+        page.bring_to_front()
+        if "cart" not in page.url:
+            page.get_by_text("Go to Cart", exact=False).first.click(timeout=5000)
+            page.wait_for_load_state("domcontentloaded")
+            page.wait_for_timeout(1500)
 
-            if not verify("Swiggy cart page with items", client):
-                _navigate_chrome("https://www.swiggy.com/instamart/cart"); time.sleep(2.5)
+        proceed = page.locator(
+            "text=/proceed to pay|proceed to checkout|click to pay|continue|checkout/i")
+        if proceed.count():
+            proceed.first.click()
+            page.wait_for_load_state("domcontentloaded")
+            page.wait_for_timeout(1800)
 
-            pos = find_element("Proceed to pay or Checkout button", client)
-            if pos:
-                pyautogui.click(*pos); time.sleep(2.0)
+        if "login" in (page.url + page.title()).lower():
+            return "LOGIN"
 
-            pos = find_element("Amazon Pay wallet payment option", client)
-            if pos:
-                pyautogui.click(*pos); time.sleep(0.8)
-                pos2 = find_element("Place Order or Pay now confirm button", client)
-                if pos2:
-                    pyautogui.click(*pos2); time.sleep(2.0)
-                    if verify("order placed confirmation or order successful screen", client):
-                        return f"Order placed for {product} via Amazon Pay!"
-                return "Amazon Pay selected — tap Place Order on screen to finish."
+        amazon = page.locator("text=/amazon pay/i")
+        if not amazon.count():
+            page.screenshot(path=SWIGGY_DEBUG_PNG)
+            return "NOAMAZON"
+        amazon.first.click()
+        page.wait_for_timeout(1000)
 
-            logging.warning("swiggy_checkout: Amazon Pay not found attempt %d", attempt)
+        place = page.locator("text=/place order|pay now|make payment/i")
+        if not place.count():
+            return "AMAZON_SELECTED"
+        place.first.click()
+        page.wait_for_timeout(2500)
 
-        except Exception as e:
-            logging.error("swiggy_checkout attempt %d: %s", attempt, e)
-        time.sleep(0.5)
+        if page.locator("text=/order placed|order confirmed|thank you|order id/i").count():
+            return "PLACED"
+        return "SUBMITTED"
 
-    return f"Couldn't reach payment for {product} after {MAX_RETRIES} attempts."
+    try:
+        res = BROWSER.submit(task, timeout=70)
+    except Exception as e:
+        logging.error("swiggy_checkout: %s", e)
+        return f"I hit an error during checkout: {str(e)[:120]}"
+
+    return {
+        "LOGIN":           "Swiggy wants you to log in before payment. Please log in once in the BashIn Chrome window.",
+        "NOAMAZON":        "I reached checkout but couldn't find Amazon Pay — please pick a payment method on screen.",
+        "AMAZON_SELECTED": "Amazon Pay is selected — tap Place Order on screen to finish.",
+        "PLACED":          f"Order placed for {product} via Amazon Pay!",
+        "SUBMITTED":       f"I submitted the order for {product} — please check the screen to confirm.",
+    }.get(res, f"I couldn't complete checkout for {product}.")
 
 
-# ── Google Calendar Agent ─────────────────────────────────────────────────────
+# ── Google Calendar Agent (Playwright, real DOM) ──────────────────────────────
 def _parse_event_datetime(date_str: str, time_str: str):
     now = datetime.datetime.now()
     if date_str == "today":
@@ -366,7 +317,6 @@ def _parse_event_datetime(date_str: str, time_str: str):
             base = datetime.date.fromisoformat(date_str)
         except Exception:
             base = now.date()
-
     if time_str:
         try:
             h, m = map(int, time_str.replace(".", ":").split(":")[:2])
@@ -375,7 +325,6 @@ def _parse_event_datetime(date_str: str, time_str: str):
             start = datetime.datetime(base.year, base.month, base.day, 9, 0)
     else:
         start = datetime.datetime(base.year, base.month, base.day, 9, 0)
-
     return start, start + datetime.timedelta(hours=1)
 
 
@@ -392,59 +341,54 @@ def calendar_agent(params: dict, client: OpenAI) -> str:
            f"?text={quote(event)}&dates={date_param}")
     logging.info("calendar URL: %s", url)
 
-    for attempt in range(MAX_RETRIES):
+    def task(page):
+        page.bring_to_front()
+        page.goto(url, wait_until="domcontentloaded", timeout=30000)
+        page.wait_for_timeout(1500)
+
+        if "accounts.google.com" in page.url or "signin" in page.url.lower():
+            return "LOGIN"
+
+        # The Save button carries the accessible name "Save" — deterministic.
+        save = page.get_by_role("button", name=re.compile(r"^save$", re.I))
         try:
-            logging.info("calendar attempt %d", attempt)
+            save.first.wait_for(state="visible", timeout=15000)
+        except Exception:
+            page.screenshot(path=CALENDAR_DEBUG_PNG)
+            logging.warning("calendar: Save not found. url=%s png=%s",
+                            page.url, CALENDAR_DEBUG_PNG)
+            return "NOSAVE"
 
-            if attempt == 0:
-                _open_chrome(url)
-            else:
-                _navigate_chrome(url)
+        save.first.click()
+        # Success = navigation away from the event-edit URL
+        try:
+            page.wait_for_url(lambda u: "eventedit" not in u, timeout=8000)
+            return "OK"
+        except Exception:
+            page.wait_for_timeout(1500)
+            return "OK" if "eventedit" not in page.url else "UNSURE"
 
-            # Poll for the event form (up to 12 s)
-            if not _wait_page("Google Calendar event creation form with title field", client, timeout=12.0):
-                logging.warning("calendar: form not visible attempt %d", attempt)
-                continue
+    try:
+        res = BROWSER.submit(task, timeout=60)
+    except RuntimeError as e:
+        if "Playwright not available" in str(e):
+            return "Playwright isn't installed yet. Run: pip install playwright"
+        return f"Browser error on Calendar: {str(e)[:120]}"
+    except Exception as e:
+        logging.error("calendar: %s", e)
+        return f"I hit an error driving Chrome for Calendar: {str(e)[:120]}"
 
-            # Scroll to top so Save toolbar is always in view
-            sw = ctypes.windll.user32.GetSystemMetrics(0)
-            sh = ctypes.windll.user32.GetSystemMetrics(1)
-            pyautogui.click(sw // 2, sh // 2); time.sleep(0.3)
-            pyautogui.hotkey("ctrl", "home"); time.sleep(0.4)
-
-            pos = None
-            for desc in [
-                "blue Save button at the top of the Google Calendar event form",
-                "Save button in the event editing toolbar",
-                "button that says Save near the top of the page",
-                "Save",
-            ]:
-                pos = find_element(desc, client)
-                if pos:
-                    logging.info("calendar: Save found with %r at %s", desc, pos)
-                    break
-
-            time_str = f" at {t}" if t else ""
-
-            if pos:
-                pyautogui.click(*pos); time.sleep(2.5)
-                if verify("Google Calendar week or month view (event form is closed)", client):
-                    return f"Added '{event}'{time_str} to your calendar."
-                return f"Saved '{event}'{time_str} — check your calendar to confirm."
-
-            # Keyboard fallback
-            logging.warning("calendar: vision failed, trying Tab fallback attempt %d", attempt)
-            for _ in range(6):
-                pyautogui.press("tab"); time.sleep(0.15)
-            pyautogui.press("enter"); time.sleep(2.5)
-            if verify("Google Calendar week or month view (event form is closed)", client):
-                return f"Added '{event}'{time_str} to your calendar."
-
-        except Exception as e:
-            logging.error("calendar attempt %d: %s", attempt, e)
-        time.sleep(0.5)
-
-    return f"Couldn't save '{event}' to calendar after {MAX_RETRIES} attempts."
+    time_str = f" at {t}" if t else ""
+    if res == "LOGIN":
+        return ("The BashIn Chrome window isn't logged into Google yet. I've opened it — "
+                "please sign in once, then ask me again.")
+    if res == "NOSAVE":
+        return f"I opened the event form for '{event}' but couldn't find the Save button."
+    if res == "UNSURE":
+        return f"I clicked Save for '{event}'{time_str} — please check your calendar to confirm."
+    if res == "OK":
+        return f"Added '{event}'{time_str} to your calendar."
+    return f"I couldn't save '{event}' to your calendar."
 
 
 # ── Orchestrator entry point ──────────────────────────────────────────────────
@@ -463,7 +407,6 @@ def run_agent(text: str, client: OpenAI):
 
     intent = detect_intent(text)
     logging.info("run_agent: intent=%s  text=%r", intent, text)
-
     if intent == "general":
         return None
 
