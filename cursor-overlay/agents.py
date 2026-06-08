@@ -424,13 +424,16 @@ def calendar_agent(params: dict, client: OpenAI) -> str:
 def run_agent(text: str, client: OpenAI):
     """Route to specialist. Returns speech string, or None to fall back to GPT-4o."""
     if "swiggy_checkout" in _pending:
+        # Cancel ALWAYS wins over confirm — if the user says "cancel" anywhere in
+        # the utterance (even alongside "proceed"), never touch payment.
+        if _CANCEL_RE.search(text):
+            info = _pending.pop("swiggy_checkout")
+            logging.info("run_agent: swiggy checkout cancelled for %r", info)
+            return f"Okay, cancelled. {info['product']} is still in your cart but I won't pay."
         if _CONFIRM_RE.search(text):
             info = _pending.pop("swiggy_checkout")
             logging.info("run_agent: swiggy checkout confirmed for %r", info)
             return swiggy_checkout(info["product"], client)
-        if _CANCEL_RE.search(text):
-            info = _pending.pop("swiggy_checkout")
-            return f"Order for {info['product']} cancelled."
         if detect_intent(text) not in ("general", "swiggy"):
             _pending.pop("swiggy_checkout", None)
 
