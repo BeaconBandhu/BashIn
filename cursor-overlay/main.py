@@ -13,7 +13,8 @@ logging.basicConfig(filename=_LOG, level=logging.DEBUG,
                     format="%(asctime)s %(levelname)s %(message)s", filemode="w")
 
 # Silence noisy HTTP-level debug logs from openai/httpx
-for _noisy in ("httpx", "httpcore", "openai._base_client", "openai.http_client"):
+for _noisy in ("httpx", "httpcore", "openai._base_client", "openai.http_client",
+               "websockets", "websockets.server", "asyncio"):
     logging.getLogger(_noisy).setLevel(logging.WARNING)
 
 # ── Single-instance mutex ──────────────────────────────────────────────────────

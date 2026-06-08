@@ -12,15 +12,11 @@ Flow:
 Runs the asyncio WS server on a dedicated thread; public methods are called from
 the overlay's per-command worker threads and block on the result.
 """
-import os, json, time, asyncio, logging, threading, subprocess, itertools
+import json, asyncio, logging, threading, itertools
 
 import websockets
-from constants import BASE_DIR
 
-CHROME = r"C:\Program Files\Google\Chrome\Application\chrome.exe"
-PORT   = 8777
-# Open automation tabs in the user's default (personal, Swiggy-logged-in) profile
-CHROME_PROFILE = "Default"
+PORT = 8777
 
 
 class ChromeBridge:
@@ -76,33 +72,28 @@ class ChromeBridge:
     def is_connected(self) -> bool:
         return self._sw is not None
 
-    def run_command(self, open_url: str, action: dict, tab_match: str, timeout: float = 60):
-        """Open `open_url` in the user's Chrome and run `action` there. Blocks."""
+    def run_command(self, url: str, action: dict, timeout: float = 60):
+        """Open `url` as a tab in the user's Chrome (via the extension) and run
+        `action` there. Blocks for the content script's result."""
         self.start()
         fut = asyncio.run_coroutine_threadsafe(
-            self._run_command(open_url, action, tab_match, timeout), self._loop)
+            self._run_command(url, action, timeout), self._loop)
         return fut.result(timeout=timeout + 15)
 
-    async def _run_command(self, open_url, action, tab_match, timeout):
-        # 1. Open the page as a tab in the user's real Chrome
-        try:
-            subprocess.Popen([CHROME, f"--profile-directory={CHROME_PROFILE}", open_url])
-        except Exception as e:
-            return {"ok": False, "reason": "CHROME_LAUNCH", "error": str(e)}
-
-        # 2. Wait for the extension's service worker to be connected
+    async def _run_command(self, url, action, timeout):
+        # Wait for the extension's service worker to be connected
         t0 = self._loop.time()
         while self._sw is None and self._loop.time() - t0 < 25:
             await asyncio.sleep(0.3)
         if self._sw is None:
             return {"ok": False, "reason": "NO_EXTENSION"}
 
-        # 3. Send the command and await the content script's result
+        # The extension opens the tab itself and runs the action there
         cid = next(self._ids)
         fut = self._loop.create_future()
         self._pending[cid] = fut
         try:
-            await self._sw.send(json.dumps({"id": cid, "tabMatch": tab_match, **action}))
+            await self._sw.send(json.dumps({"id": cid, "url": url, **action}))
             return await asyncio.wait_for(fut, timeout=timeout)
         except asyncio.TimeoutError:
             return {"ok": False, "reason": "TIMEOUT"}

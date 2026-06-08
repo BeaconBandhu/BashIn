@@ -144,7 +144,7 @@ def swiggy_agent(params: dict, client: OpenAI) -> str:
                   f"?custom_back=true&query={quote(product)}")
     try:
         res = BRIDGE.run_command(search_url, {"action": "swiggy_buy", "qty": qty},
-                                 "instamart/search", timeout=70)
+                                 timeout=70)
     except Exception as e:
         logging.error("swiggy: %s", e)
         return f"I hit an error driving Chrome for Swiggy: {str(e)[:120]}"
@@ -174,8 +174,7 @@ def swiggy_checkout(product: str, client: OpenAI) -> str:
     """Best-effort checkout with Amazon Pay. Reports honestly; never fakes success."""
     cart_url = "https://www.swiggy.com/instamart/cart"
     try:
-        res = BRIDGE.run_command(cart_url, {"action": "swiggy_checkout"},
-                                 "swiggy.com", timeout=70)
+        res = BRIDGE.run_command(cart_url, {"action": "swiggy_checkout"}, timeout=70)
     except Exception as e:
         logging.error("swiggy_checkout: %s", e)
         return f"I hit an error during checkout: {str(e)[:120]}"
@@ -228,8 +227,7 @@ def calendar_agent(params: dict, client: OpenAI) -> str:
     logging.info("calendar URL: %s", url)
 
     try:
-        res = BRIDGE.run_command(url, {"action": "calendar_save"},
-                                 "calendar.google.com", timeout=50)
+        res = BRIDGE.run_command(url, {"action": "calendar_save"}, timeout=50)
     except Exception as e:
         logging.error("calendar: %s", e)
         return f"I hit an error driving Chrome for Calendar: {str(e)[:120]}"

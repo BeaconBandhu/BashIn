@@ -1,22 +1,18 @@
 // BashIn Bridge — service worker.
-// Holds a WebSocket to the local Python overlay (ws://127.0.0.1:8777) and relays
-// commands to the content script in the right tab. The SW (chrome-extension://
-// origin) is NOT subject to Swiggy's page CSP, so the WS connects reliably.
+// Holds a WebSocket to the local overlay (ws://127.0.0.1:8777). On a command it
+// OPENS the target page itself (chrome.tabs.create, in its own profile), waits
+// for it to load, then tells the content script what to do. Opening the tab here
+// guarantees the content script is present and we target the exact tab.
 
 const WS_URL = "ws://127.0.0.1:8777";
 let ws = null;
 
 function connect() {
   if (ws && (ws.readyState === WebSocket.CONNECTING || ws.readyState === WebSocket.OPEN)) return;
-  try {
-    ws = new WebSocket(WS_URL);
-  } catch (e) {
-    setTimeout(connect, 2000);
-    return;
-  }
-  ws.onopen = () => {
-    try { ws.send(JSON.stringify({ type: "sw_hello" })); } catch (e) {}
-  };
+  try { ws = new WebSocket(WS_URL); }
+  catch (e) { setTimeout(connect, 2000); return; }
+
+  ws.onopen = () => safeSend({ type: "sw_hello" });
   ws.onmessage = async (ev) => {
     let msg;
     try { msg = JSON.parse(ev.data); } catch (e) { return; }
@@ -34,16 +30,23 @@ function safeSend(obj) {
   try { if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(obj)); } catch (e) {}
 }
 
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
 async function handleCommand(msg) {
-  const tab = await findTab(msg.tabMatch, 25000);
-  if (!tab) return { ok: false, reason: "NO_TAB" };
-  // Retry sendMessage until the content script answers (it injects at document_idle)
+  let tab;
+  try {
+    tab = await chrome.tabs.create({ url: msg.url, active: true });
+  } catch (e) {
+    return { ok: false, reason: "TAB_CREATE_FAILED", error: String(e) };
+  }
+
+  await waitForLoad(tab.id, 30000);
+
+  // Retry until the content script answers (it injects at document_idle)
   const t0 = Date.now();
-  while (Date.now() - t0 < 25000) {
+  while (Date.now() - t0 < 30000) {
     try {
-      const res = await chrome.tabs.sendMessage(tab.id, {
-        action: msg.action, qty: msg.qty
-      });
+      const res = await chrome.tabs.sendMessage(tab.id, { action: msg.action, qty: msg.qty });
       if (res) return res;
     } catch (e) { /* content script not ready yet */ }
     await sleep(400);
@@ -51,26 +54,24 @@ async function handleCommand(msg) {
   return { ok: false, reason: "NO_CONTENT" };
 }
 
-async function findTab(match, timeout) {
-  const t0 = Date.now();
-  while (Date.now() - t0 < timeout) {
-    const tabs = await chrome.tabs.query({});
-    const m = tabs.filter(t => t.url && t.url.includes(match));
-    if (m.length) { m.sort((a, b) => b.id - a.id); return m[0]; }  // newest tab
-    await sleep(400);
-  }
-  return null;
+function waitForLoad(tabId, timeout) {
+  return new Promise((resolve) => {
+    const t0 = Date.now();
+    const check = async () => {
+      try {
+        const t = await chrome.tabs.get(tabId);
+        if (t.status === "complete") return resolve(true);
+      } catch (e) { return resolve(false); }
+      if (Date.now() - t0 > timeout) return resolve(false);
+      setTimeout(check, 300);
+    };
+    check();
+  });
 }
 
-function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
-
-// A content script announcing itself wakes the SW → ensure WS is connected.
-chrome.runtime.onMessage.addListener((msg, sender) => {
-  if (msg && msg.type === "ready") connect();
-});
-
-// Keepalive: wake every 30s and reconnect if needed.
+// Keepalive + reconnect.
 chrome.alarms.create("keepalive", { periodInMinutes: 0.5 });
 chrome.alarms.onAlarm.addListener(() => connect());
+chrome.runtime.onMessage.addListener(() => connect());  // content scripts wake us
 
 connect();
