@@ -27,6 +27,8 @@ from screen  import capture_screen, GUIDE_SYS, APP_ANALYZE_PROMPT
 from bridge   import Bridge
 from widgets  import Overlay, ResponseBubble
 from execute  import run_step
+from agents   import run_agent
+from chrome_bridge import BRIDGE
 
 
 class App:
@@ -37,6 +39,7 @@ class App:
         self.qt.setQuitOnLastWindowClosed(False)
         self.overlay = Overlay()
         self.bubble  = ResponseBubble()
+        self.bubble.show_text = lambda *args, **kwargs: None
         self.bridge  = Bridge()
         self.history = deque()
 
@@ -106,6 +109,11 @@ class App:
         self.timer.start(TICK_MS)
 
         self._build_tray()
+        # Start the local WS server so the BashIn Chrome extension can connect
+        try:
+            BRIDGE.start()
+        except Exception as e:
+            logging.warning("BRIDGE.start failed: %s", e)
         threading.Thread(target=self._hotkey_loop, daemon=True).start()
         if not registered():
             register()
@@ -352,6 +360,21 @@ class App:
             logging.info("STT result: %r  lang=%s", text, lang)
             if not text:
                 return
+
+            # ── Specialist agent fast path ────────────────────────────────────
+            agent_result = run_agent(text, client)
+            if agent_result is not None:
+                self._conv_history.append({"role": "user",      "content": text})
+                self._conv_history.append({"role": "assistant", "content": agent_result})
+                self.bridge.start_speaking.emit()
+                tts = client.audio.speech.create(
+                    model="tts-1", voice="alloy",
+                    input=agent_result, response_format="pcm")
+                pcm = np.frombuffer(tts.content, dtype=np.int16).astype(np.float32) / 32768.0
+                sd.play(pcm, samplerate=24000)
+                sd.wait()
+                return
+            # ── General GPT-4o pipeline ───────────────────────────────────────
 
             b64, xs, ys, iw, ih, sw, sh = capture_screen()
 
@@ -623,7 +646,7 @@ class App:
             self.overlay.update_levels(levels)
 
     def _on_response(self, text):
-        self.bubble.show_text(text, *self._anchor)
+        pass   # bubble removed — agent speaks results directly via TTS
 
     def _on_error(self, msg):
         self.tray.showMessage("Cursor Overlay", msg,

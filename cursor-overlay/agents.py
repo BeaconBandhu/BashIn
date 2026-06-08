@@ -1,15 +1,17 @@
 """
 Multi-agent orchestrator for BashIn.
 
-Web agents (Swiggy, Calendar) drive a real, logged-in Chrome through Playwright
-(see browser.py) — real DOM clicks and real cart/URL state, NO screenshots and
-NO coordinate guessing. Spotify stays on the desktop app via pyautogui.
+Web agents (Swiggy, Calendar) drive the user's OWN logged-in Chrome through the
+BashIn Bridge extension (see extension/ + chrome_bridge.py): BashIn opens the page
+as a tab in the real Chrome and the extension's content script performs real DOM
+clicks. No separate profile, no screenshots, no coordinate guessing.
+Spotify stays on the desktop app via pyautogui.
 
 Flow per command:
   1. Regex intent detection   — instant, no LLM
   2. gpt-4o-mini param extract — song/product/event + qty/time
-  3. Specialist agent executes — Playwright (web) or pyautogui (Spotify)
-  4. Deterministic verification — DOM selectors / URL, not vision
+  3. Specialist agent executes — extension (web) or pyautogui (Spotify)
+  4. Deterministic result      — DOM state from the content script, not vision
   5. Honest success/failure    — never claims success it can't observe
 """
 import re, time, json, logging, os, subprocess, datetime
@@ -17,19 +19,14 @@ from urllib.parse import quote
 import pyautogui
 from openai import OpenAI
 
-from constants import BASE_DIR
-from screen    import capture_screen
-from browser   import BROWSER
+from screen       import capture_screen
+from chrome_bridge import BRIDGE
 
 MAX_RETRIES = 3
 SPOTIFY = r"C:\Users\User\AppData\Roaming\Spotify\Spotify.exe"
 
 pyautogui.FAILSAFE = True
 pyautogui.PAUSE    = 0.04
-
-# Where Playwright dumps a screenshot when a selector can't be found (for debugging)
-SWIGGY_DEBUG_PNG   = os.path.join(BASE_DIR, "swiggy_debug.png")
-CALENDAR_DEBUG_PNG = os.path.join(BASE_DIR, "calendar_debug.png")
 
 # ── Multi-turn pending state ───────────────────────────────────────────────────
 _pending: dict = {}
@@ -135,45 +132,8 @@ def spotify_agent(params: dict, client: OpenAI) -> str:
     return f"Couldn't verify Spotify opened {query} after {MAX_RETRIES} tries."
 
 
-# ── Swiggy Instamart Agent (Playwright, real DOM — selectors verified live) ───
-# Discovered via DOM probe on the live site:
-#   add button   → [data-testid="buttonpair-add"]   (an SVG "+" icon, no text)
-#   cart bar     → [data-testid="veiwcartbar-container"]   (Swiggy's own typo)
-#   variant modal→ aria-label "Please select variant of ..." / "Items list"
-#   variant add  → [aria-label="Add 1 item to cart"]
-#   close modal  → [aria-label="Close overlay"]
-_SW_ADD      = '[data-testid="buttonpair-add"]'
-_SW_CARTBAR  = '[data-testid="veiwcartbar-container"]'
-_SW_OVERLAY  = '[aria-label^="Please select variant"], [aria-label="Items list"]'
-_SW_VAR_ADD  = '[aria-label="Add 1 item to cart"]'
-_SW_CLOSE_OV = '[aria-label="Close overlay"]'
-
-# In the "select variant" overlay, find the SINGLE-unit row (e.g. "350 ml", NOT
-# "350 ml x 6"/"x 2" multipacks) so a requested quantity = that many individual
-# units. Correlates each add button to its row label by vertical position and
-# returns the add-button index of the single unit, or -1 if there isn't one.
-_JS_SINGLE_VARIANT_IDX = r"""
-() => {
-  const adds = [...document.querySelectorAll('[aria-label="Add 1 item to cart"]')];
-  const rows = [...document.querySelectorAll('[aria-label*="rupee"]')];
-  const rowFor = (btn) => {
-    const by = btn.getBoundingClientRect().top;
-    let best = '', bestd = 1e9;
-    for (const r of rows) {
-      const d = Math.abs(r.getBoundingClientRect().top - by);
-      if (d < bestd) { bestd = d; best = r.getAttribute('aria-label'); }
-    }
-    return best || '';
-  };
-  for (let i = 0; i < adds.length; i++) {
-    const label = rowFor(adds[i]);
-    if (/\bml\b/i.test(label) && !/x\s*\d/i.test(label)) return i;   // no "x N" = single
-  }
-  return -1;
-}
-"""
-
-
+# ── Swiggy Instamart Agent (via BashIn extension in the user's real Chrome) ────
+# DOM logic lives in extension/content.js. Result dict: {ok, text?, reason?}.
 def swiggy_agent(params: dict, client: OpenAI) -> str:
     product = params.get("product", "").strip()
     qty     = int(params.get("quantity", 1))
@@ -182,159 +142,56 @@ def swiggy_agent(params: dict, client: OpenAI) -> str:
 
     search_url = (f"https://www.swiggy.com/instamart/search"
                   f"?custom_back=true&query={quote(product)}")
-
-    def task(page):
-        page.bring_to_front()
-        page.goto(search_url, wait_until="domcontentloaded", timeout=30000)
-
-        # Wait for product add buttons to render
-        try:
-            page.wait_for_selector(_SW_ADD, timeout=15000)
-        except Exception:
-            page.screenshot(path=SWIGGY_DEBUG_PNG)
-            low = (page.content() or "").lower()
-            logging.warning("swiggy: no products. title=%r url=%s",
-                            page.title(), page.url)
-            if "log in" in low or "sign in" in low or "login" in low:
-                return "LOGIN"
-            return "NOPRODUCTS"
-
-        # Click the first product's "+" add control
-        page.locator(_SW_ADD).first.scroll_into_view_if_needed()
-        page.locator(_SW_ADD).first.click()
-        page.wait_for_timeout(1200)
-
-        # Multi-variant products pop a "select variant" overlay (350ml / x2 / x6).
-        # Pick the SINGLE-unit row so qty = that many individual units, not packs.
-        if page.locator(_SW_OVERLAY).count():
-            if not page.locator(_SW_VAR_ADD).count():
-                page.screenshot(path=SWIGGY_DEBUG_PNG)
-                return "NOVARIANT"
-            idx = page.evaluate(_JS_SINGLE_VARIANT_IDX)
-            if idx is None or idx < 0:
-                idx = 0                                       # no single unit → first
-                logging.info("swiggy: no single-unit variant, using first row")
-            else:
-                logging.info("swiggy: single-unit variant at row %d, adding %d", idx, qty)
-            target = page.locator(_SW_VAR_ADD).nth(idx)        # stable across clicks
-            for _ in range(qty):                               # qty individual units
-                target.click()
-                page.wait_for_timeout(350)
-            if page.locator(_SW_CLOSE_OV).count():
-                page.locator(_SW_CLOSE_OV).first.click()
-                page.wait_for_timeout(600)
-        else:
-            # Single-variant product — clicking the same control increments qty
-            for _ in range(max(0, qty - 1)):
-                page.wait_for_timeout(400)
-                page.locator(_SW_ADD).first.click()
-
-        # Confirm the cart bar shows an item count
-        bar = page.locator(_SW_CARTBAR)
-        try:
-            bar.first.wait_for(state="visible", timeout=6000)
-        except Exception:
-            page.screenshot(path=SWIGGY_DEBUG_PNG)
-            return "NOCART"
-        bar_text = bar.first.inner_text()
-        if not re.search(r"\bitem", bar_text, re.I):
-            page.screenshot(path=SWIGGY_DEBUG_PNG)
-            logging.warning("swiggy: cart bar has no item count: %r", bar_text)
-            return "NOCART"
-        logging.info("swiggy: cart = %r", bar_text.replace("\n", " | ")[:120])
-
-        # Open the cart for review
-        try:
-            page.get_by_text("Go to Cart", exact=False).first.click(timeout=4000)
-            page.wait_for_load_state("domcontentloaded")
-            page.wait_for_timeout(1500)
-        except Exception:
-            logging.warning("swiggy: couldn't click Go to Cart; leaving on results")
-        return "OK"
-
     try:
-        res = BROWSER.submit(task, timeout=80)
-    except RuntimeError as e:
-        if "Playwright not available" in str(e):
-            return ("Playwright isn't installed yet. Open a terminal and run: "
-                    "pip install playwright")
-        return f"Browser error on Swiggy: {str(e)[:120]}"
+        res = BRIDGE.run_command(search_url, {"action": "swiggy_buy", "qty": qty},
+                                 "instamart/search", timeout=70)
     except Exception as e:
         logging.error("swiggy: %s", e)
         return f"I hit an error driving Chrome for Swiggy: {str(e)[:120]}"
 
-    if res == "LOGIN":
-        return ("The BashIn Chrome window isn't logged into Swiggy yet. I've opened it — "
-                "please log in once, then ask me again.")
-    if res == "NOPRODUCTS":
-        return (f"I opened Swiggy but couldn't see any products for {product} — most likely "
-                f"the delivery location isn't set in the BashIn Chrome window. Set it once, "
-                f"then ask again.")
-    if res == "NOVARIANT":
-        return f"A variant picker opened for {product} but I couldn't select a size."
-    if res == "NOCART":
-        return f"I clicked add for {product} but couldn't confirm the cart updated."
-    if res != "OK":
-        return f"I couldn't add {product} to the Swiggy cart."
+    logging.info("swiggy: bridge result=%s", res)
+    if isinstance(res, dict) and res.get("ok"):
+        _pending["swiggy_checkout"] = {"product": product, "qty": qty}
+        qty_str = f"{qty}x " if qty > 1 else ""
+        return (f"Added {qty_str}{product} to your cart and opened it for review. "
+                f"Say 'proceed to checkout' to pay with Amazon Pay, or 'cancel' to stop.")
 
-    _pending["swiggy_checkout"] = {"product": product, "qty": qty}
-    qty_str = f"{qty}x " if qty > 1 else ""
-    return (f"Added {qty_str}{product} to your cart and opened it for review. "
-            f"Say 'proceed to checkout' to pay with Amazon Pay, or 'cancel' to stop.")
+    reason = res.get("reason", "") if isinstance(res, dict) else ""
+    if reason in ("NO_EXTENSION", "NO_TAB", "NO_CONTENT", "TIMEOUT"):
+        return ("I couldn't reach the BashIn Chrome extension. Make sure Chrome is open "
+                "and the BashIn Bridge extension is enabled, then try again.")
+    if reason == "NOPRODUCTS":
+        return (f"I opened Swiggy but couldn't see products for {product} — check the "
+                f"delivery location is set in Chrome, then ask again.")
+    if reason == "NOVARIANT":
+        return f"A size picker opened for {product} but I couldn't select a single unit."
+    if reason == "NOCART":
+        return f"I clicked add for {product} but couldn't confirm the cart updated."
+    return f"I couldn't add {product} to the Swiggy cart."
 
 
 def swiggy_checkout(product: str, client: OpenAI) -> str:
     """Best-effort checkout with Amazon Pay. Reports honestly; never fakes success."""
-    def task(page):
-        page.bring_to_front()
-        if "cart" not in page.url:
-            page.get_by_text("Go to Cart", exact=False).first.click(timeout=5000)
-            page.wait_for_load_state("domcontentloaded")
-            page.wait_for_timeout(1500)
-
-        proceed = page.locator(
-            "text=/proceed to pay|proceed to checkout|click to pay|continue|checkout/i")
-        if proceed.count():
-            proceed.first.click()
-            page.wait_for_load_state("domcontentloaded")
-            page.wait_for_timeout(1800)
-
-        if "login" in (page.url + page.title()).lower():
-            return "LOGIN"
-
-        amazon = page.locator("text=/amazon pay/i")
-        if not amazon.count():
-            page.screenshot(path=SWIGGY_DEBUG_PNG)
-            return "NOAMAZON"
-        amazon.first.click()
-        page.wait_for_timeout(1000)
-
-        place = page.locator("text=/place order|pay now|make payment/i")
-        if not place.count():
-            return "AMAZON_SELECTED"
-        place.first.click()
-        page.wait_for_timeout(2500)
-
-        if page.locator("text=/order placed|order confirmed|thank you|order id/i").count():
-            return "PLACED"
-        return "SUBMITTED"
-
+    cart_url = "https://www.swiggy.com/instamart/cart"
     try:
-        res = BROWSER.submit(task, timeout=70)
+        res = BRIDGE.run_command(cart_url, {"action": "swiggy_checkout"},
+                                 "swiggy.com", timeout=70)
     except Exception as e:
         logging.error("swiggy_checkout: %s", e)
         return f"I hit an error during checkout: {str(e)[:120]}"
 
+    logging.info("swiggy_checkout: bridge result=%s", res)
+    reason = res.get("reason", "") if isinstance(res, dict) else ""
     return {
-        "LOGIN":           "Swiggy wants you to log in before payment. Please log in once in the BashIn Chrome window.",
+        "LOGIN":           "Swiggy wants you to log in before payment. Please log in once in Chrome.",
         "NOAMAZON":        "I reached checkout but couldn't find Amazon Pay — please pick a payment method on screen.",
         "AMAZON_SELECTED": "Amazon Pay is selected — tap Place Order on screen to finish.",
         "PLACED":          f"Order placed for {product} via Amazon Pay!",
         "SUBMITTED":       f"I submitted the order for {product} — please check the screen to confirm.",
-    }.get(res, f"I couldn't complete checkout for {product}.")
+    }.get(reason, f"I couldn't complete checkout for {product}.")
 
 
-# ── Google Calendar Agent (Playwright, real DOM) ──────────────────────────────
+# ── Google Calendar Agent (via BashIn extension) ──────────────────────────────
 def _parse_event_datetime(date_str: str, time_str: str):
     now = datetime.datetime.now()
     if date_str == "today":
@@ -370,54 +227,24 @@ def calendar_agent(params: dict, client: OpenAI) -> str:
            f"?text={quote(event)}&dates={date_param}")
     logging.info("calendar URL: %s", url)
 
-    def task(page):
-        page.bring_to_front()
-        page.goto(url, wait_until="domcontentloaded", timeout=30000)
-        page.wait_for_timeout(1500)
-
-        if "accounts.google.com" in page.url or "signin" in page.url.lower():
-            return "LOGIN"
-
-        # The Save button carries the accessible name "Save" — deterministic.
-        save = page.get_by_role("button", name=re.compile(r"^save$", re.I))
-        try:
-            save.first.wait_for(state="visible", timeout=15000)
-        except Exception:
-            page.screenshot(path=CALENDAR_DEBUG_PNG)
-            logging.warning("calendar: Save not found. url=%s png=%s",
-                            page.url, CALENDAR_DEBUG_PNG)
-            return "NOSAVE"
-
-        save.first.click()
-        # Success = navigation away from the event-edit URL
-        try:
-            page.wait_for_url(lambda u: "eventedit" not in u, timeout=8000)
-            return "OK"
-        except Exception:
-            page.wait_for_timeout(1500)
-            return "OK" if "eventedit" not in page.url else "UNSURE"
-
     try:
-        res = BROWSER.submit(task, timeout=60)
-    except RuntimeError as e:
-        if "Playwright not available" in str(e):
-            return "Playwright isn't installed yet. Run: pip install playwright"
-        return f"Browser error on Calendar: {str(e)[:120]}"
+        res = BRIDGE.run_command(url, {"action": "calendar_save"},
+                                 "calendar.google.com", timeout=50)
     except Exception as e:
         logging.error("calendar: %s", e)
         return f"I hit an error driving Chrome for Calendar: {str(e)[:120]}"
 
+    logging.info("calendar: bridge result=%s", res)
     time_str = f" at {t}" if t else ""
-    if res == "LOGIN":
-        return ("The BashIn Chrome window isn't logged into Google yet. I've opened it — "
-                "please sign in once, then ask me again.")
-    if res == "NOSAVE":
-        return f"I opened the event form for '{event}' but couldn't find the Save button."
-    if res == "UNSURE":
-        return f"I clicked Save for '{event}'{time_str} — please check your calendar to confirm."
-    if res == "OK":
+    reason   = res.get("reason", "") if isinstance(res, dict) else ""
+    if isinstance(res, dict) and res.get("ok"):
         return f"Added '{event}'{time_str} to your calendar."
-    return f"I couldn't save '{event}' to your calendar."
+    if reason in ("NO_EXTENSION", "NO_TAB", "NO_CONTENT", "TIMEOUT"):
+        return ("I couldn't reach the BashIn Chrome extension. Make sure Chrome is open "
+                "and the extension is enabled, then try again.")
+    if reason == "NOSAVE":
+        return f"I opened the event form for '{event}' but couldn't find the Save button."
+    return f"I clicked Save for '{event}'{time_str} — please check your calendar to confirm."
 
 
 # ── Orchestrator entry point ──────────────────────────────────────────────────
