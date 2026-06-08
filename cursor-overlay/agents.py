@@ -148,6 +148,31 @@ _SW_OVERLAY  = '[aria-label^="Please select variant"], [aria-label="Items list"]
 _SW_VAR_ADD  = '[aria-label="Add 1 item to cart"]'
 _SW_CLOSE_OV = '[aria-label="Close overlay"]'
 
+# In the "select variant" overlay, find the SINGLE-unit row (e.g. "350 ml", NOT
+# "350 ml x 6"/"x 2" multipacks) so a requested quantity = that many individual
+# units. Correlates each add button to its row label by vertical position and
+# returns the add-button index of the single unit, or -1 if there isn't one.
+_JS_SINGLE_VARIANT_IDX = r"""
+() => {
+  const adds = [...document.querySelectorAll('[aria-label="Add 1 item to cart"]')];
+  const rows = [...document.querySelectorAll('[aria-label*="rupee"]')];
+  const rowFor = (btn) => {
+    const by = btn.getBoundingClientRect().top;
+    let best = '', bestd = 1e9;
+    for (const r of rows) {
+      const d = Math.abs(r.getBoundingClientRect().top - by);
+      if (d < bestd) { bestd = d; best = r.getAttribute('aria-label'); }
+    }
+    return best || '';
+  };
+  for (let i = 0; i < adds.length; i++) {
+    const label = rowFor(adds[i]);
+    if (/\bml\b/i.test(label) && !/x\s*\d/i.test(label)) return i;   // no "x N" = single
+  }
+  return -1;
+}
+"""
+
 
 def swiggy_agent(params: dict, client: OpenAI) -> str:
     product = params.get("product", "").strip()
@@ -179,18 +204,22 @@ def swiggy_agent(params: dict, client: OpenAI) -> str:
         page.locator(_SW_ADD).first.click()
         page.wait_for_timeout(1200)
 
-        # Multi-variant products pop a "select variant" overlay — pick a variant
+        # Multi-variant products pop a "select variant" overlay (350ml / x2 / x6).
+        # Pick the SINGLE-unit row so qty = that many individual units, not packs.
         if page.locator(_SW_OVERLAY).count():
-            logging.info("swiggy: variant overlay — selecting a variant")
-            va = page.locator(_SW_VAR_ADD)
-            if not va.count():
+            if not page.locator(_SW_VAR_ADD).count():
                 page.screenshot(path=SWIGGY_DEBUG_PNG)
                 return "NOVARIANT"
-            va.first.click()                                  # adds the variant
-            for _ in range(max(0, qty - 1)):                  # bump to requested qty
-                page.wait_for_timeout(450)
-                inc = page.locator(_SW_VAR_ADD)
-                (inc.first if inc.count() else va.first).click()
+            idx = page.evaluate(_JS_SINGLE_VARIANT_IDX)
+            if idx is None or idx < 0:
+                idx = 0                                       # no single unit → first
+                logging.info("swiggy: no single-unit variant, using first row")
+            else:
+                logging.info("swiggy: single-unit variant at row %d, adding %d", idx, qty)
+            target = page.locator(_SW_VAR_ADD).nth(idx)        # stable across clicks
+            for _ in range(qty):                               # qty individual units
+                target.click()
+                page.wait_for_timeout(350)
             if page.locator(_SW_CLOSE_OV).count():
                 page.locator(_SW_CLOSE_OV).first.click()
                 page.wait_for_timeout(600)
