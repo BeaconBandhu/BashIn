@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>clicky - an ai buddy that lives on your mac</title>
+  <meta name="description" content="it sits right next to your cursor, sees your screen, and listens when you talk. like a friend who's really good at everything."/>
+  <meta property="og:title" content="clicky - an ai buddy that lives on your mac"/>
+  <meta property="og:description" content="it sits right next to your cursor, sees your screen, and listens when you talk. like a friend who's really good at everything."/>
+  <meta property="og:image" content="https://www.hiclicky.com/og.jpg"/>
+  <meta property="og:image:width" content="1200"/>
+  <meta property="og:image:height" content="600"/>
+  <meta name="twitter:card" content="summary_large_image"/>
+  <meta name="twitter:title" content="clicky - an ai buddy that lives on your mac"/>
+  <meta name="twitter:description" content="it sits right next to your cursor, sees your screen, and listens when you talk. like a friend who's really good at everything."/>
+  <meta name="twitter:image" content="https://www.hiclicky.com/og.jpg"/>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com"/>
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+  <link href="https://fonts.googleapis.com/css2?family=Lato:wght@400;700;900&display=swap" rel="stylesheet"/>
+
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
+
+    body {
+      font-family: 'Lato', sans-serif;
+      background: #ffffff;
+      color: #000;
+      min-height: 100vh;
+      cursor: none;
+    }
+
+    /* Blue cursor overlay */
+    #custom-cursor {
+      pointer-events: none;
+      position: fixed;
+      left: 0;
+      top: 0;
+      z-index: 9999;
+      opacity: 0;
+      transition: opacity 0.3s ease;
+      will-change: transform;
+      display: block;
+    }
+
+    @media (max-width: 639px) {
+      #custom-cursor { display: none; }
+      body { cursor: auto; }
+    }
+
+    /* Layout */
+    .min-h-screen { min-height: 100vh; }
+    .bg-white { background: #fff; }
+
+    article {
+      padding-top: 80px;
+      padding-bottom: 96px;
+      text-align: center;
+    }
+
+    @media (min-width: 640px) {
+      article { padding-top: 112px; }
+    }
+
+    .hero-inner {
+      margin-left: auto;
+      margin-right: auto;
+      max-width: 800px;
+      padding-left: 24px;
+      padding-right: 24px;
+    }
+
+    .label-meet {
+      margin-bottom: 20px;
+      font-size: 13px;
+      text-transform: uppercase;
+      letter-spacing: 1.5px;
+      color: #aaaaaa;
+    }
+
+    h1 {
+      margin-bottom: 20px;
+      font-size: 44px;
+      font-weight: 900;
+      line-height: 1.05;
+      letter-spacing: -2.2px;
+      color: #000;
+    }
+
+    @media (min-width: 640px) {
+      h1 { font-size: 64px; }
+    }
+
+    .description {
+      margin-left: auto;
+      margin-right: auto;
+      margin-bottom: 16px;
+      max-width: 520px;
+      font-size: 15px;
+      line-height: 1.6;
+      letter-spacing: -0.3px;
+      color: #888888;
+    }
+
+    @media (min-width: 640px) {
+      .description { font-size: 17px; }
+    }
+
+    /* Form */
+    form {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 12px;
+    }
+
+    @media (min-width: 640px) {
+      form {
+        flex-direction: row;
+        display: inline-flex;
+        gap: 8px;
+      }
+    }
+
+    .email-input {
+      width: 100%;
+      max-width: 300px;
+      border-radius: 6px;
+      border: 1px solid #e0e0e0;
+      background: #fafafa;
+      padding: 14px 20px;
+      text-align: center;
+      font-size: 15px;
+      font-family: 'Lato', sans-serif;
+      letter-spacing: -0.3px;
+      color: #000;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+
+    .email-input::placeholder { color: #bbbbbb; }
+    .email-input:focus { border-color: #999999; }
+
+    @media (min-width: 640px) {
+      .email-input { width: 240px; }
+    }
+
+    .download-btn {
+      display: inline-flex;
+      width: 100%;
+      max-width: 300px;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      border-radius: 6px;
+      border: none;
+      background: #000;
+      padding: 16px 28px;
+      font-size: 15px;
+      font-family: 'Lato', sans-serif;
+      font-weight: 700;
+      letter-spacing: -0.3px;
+      color: #fff;
+      cursor: default;
+      opacity: 0.5;
+      transition: opacity 0.3s;
+    }
+
+    @media (min-width: 640px) {
+      .download-btn { width: auto; }
+    }
+
+    .windows-text {
+      margin-top: 16px;
+      font-size: 13px;
+      letter-spacing: -0.3px;
+      color: #aaaaaa;
+    }
+
+    .windows-text a {
+      color: inherit;
+      text-decoration: underline;
+      text-underline-offset: 2px;
+      transition: color 0.15s;
+    }
+
+    .windows-text a:hover { color: #000; }
+
+    /* Prompts grid */
+    .prompts-section {
+      margin-left: auto;
+      margin-right: auto;
+      margin-top: 48px;
+      max-width: 700px;
+      padding-left: 24px;
+      padding-right: 24px;
+      text-align: center;
+    }
+
+    @media (min-width: 640px) {
+      .prompts-section { margin-top: 64px; }
+    }
+
+    .prompts-grid {
+      margin-left: auto;
+      margin-right: auto;
+      display: grid;
+      max-width: 560px;
+      gap: 12px;
+      text-align: left;
+    }
+
+    @media (min-width: 640px) {
+      .prompts-grid { grid-template-columns: 1fr 1fr; }
+    }
+
+    .prompt-card {
+      border-radius: 8px;
+      border: 1px solid #f0f0f0;
+      background: #fafafa;
+      padding: 14px 16px;
+      font-size: 14px;
+      letter-spacing: -0.3px;
+      color: #888888;
+    }
+
+    @media (min-width: 640px) {
+      .prompt-card { font-size: 15px; }
+    }
+
+    /* Footer */
+    footer {
+      padding-bottom: 32px;
+      text-align: center;
+    }
+
+    footer p {
+      font-size: 13px;
+      letter-spacing: -0.3px;
+      color: #888888;
+    }
+
+    footer p + p { margin-top: 8px; }
+
+    footer a {
+      color: inherit;
+      text-decoration: underline;
+      text-underline-offset: 2px;
+      transition: color 0.15s;
+    }
+
+    footer a:hover { color: #000; }
+  </style>
+</head>
+<body>
+
+  <!-- Blue glowing cursor -->
+  <div id="custom-cursor">
+    <svg width="14" height="16" viewBox="0 0 12 14" fill="none" xmlns="http://www.w3.org/2000/svg"
+         style="filter: drop-shadow(0 0 6px rgba(59,130,246,0.7)) drop-shadow(0 0 14px rgba(59,130,246,0.4))">
+      <path d="M1 1L11 7L1 13V1Z" fill="#3b82f6"/>
+    </svg>
+  </div>
+
+  <div class="min-h-screen bg-white">
+    <article>
+      <div class="hero-inner">
+        <p class="label-meet">meet clicky</p>
+        <h1>an ai buddy that lives<br/>on your mac.</h1>
+        <p class="description">
+          clicky sits right next to your cursor and sees everything you see. ask a question out loud and it walks you through whatever you're working on. or say "clicky agent" and it'll spin up an agent to build, research, or do whatever for you in the background.
+        </p>
+        <form onsubmit="return false;">
+          <input
+            type="email"
+            placeholder="enter your email"
+            class="email-input"
+          />
+          <button type="submit" disabled class="download-btn">download</button>
+        </form>
+        <p class="windows-text">
+          on windows?&nbsp;
+          <a href="https://tally.so/r/kdWMjM" target="_blank" rel="noopener noreferrer">join the waitlist</a>
+        </p>
+      </div>
+
+      <div class="prompts-section">
+        <div class="prompts-grid">
+          <div class="prompt-card">"how do i color grade this in davinci resolve?"</div>
+          <div class="prompt-card">"clicky agent, turn this figma into a working webpage"</div>
+          <div class="prompt-card">"teach me what this after effects panel does"</div>
+          <div class="prompt-card">"clicky agent, find cameras like this one under $1k"</div>
+          <div class="prompt-card">"help me design this logo in figma"</div>
+          <div class="prompt-card">"clicky agent, summarize this pdf and email it to my team"</div>
+        </div>
+      </div>
+    </article>
+
+    <footer>
+      <p>made by farza &lt;3</p>
+      <p><a href="/privacy">privacy</a></p>
+    </footer>
+  </div>
+
+  <script>
+    const cursor = document.getElementById('custom-cursor');
+    let visible = false;
+
+    document.addEventListener('mousemove', function(e) {
+      cursor.style.transform = 'translate(' + e.clientX + 'px, ' + e.clientY + 'px)';
+      if (!visible) {
+        cursor.style.opacity = '1';
+        visible = true;
+      }
+    });
+
+    document.addEventListener('mouseleave', function() {
+      cursor.style.opacity = '0';
+      visible = false;
+    });
+  </script>
+</body>
+</html>
