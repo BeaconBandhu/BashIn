@@ -301,12 +301,23 @@ class App:
                 and not self.overlay.eq_mode
                 and not self.overlay.guide_mode
                 and not self.overlay._transitioning):
+            logging.info("_start_recording: transition path")
             self.overlay.begin_transition(cx, cy)
             self._trans_elapsed = 0.0
             self._trans_timer.start()
         else:
+            logging.info("_start_recording: direct path")
             self.overlay.enter_eq(cx, cy)
+            self._begin_capture()
+
+    def _begin_capture(self):
+        try:
             self.recorder.start()
+            logging.info("recorder started OK")
+        except Exception as e:
+            logging.error("recorder.start FAILED: %s", e)
+            # fall back to listening so the user can retry
+            self.conv_state = LISTENING
 
     def _trans_step(self):
         self._trans_elapsed += 0.016
@@ -316,7 +327,7 @@ class App:
             self._trans_timer.stop()
             self.overlay.finish_transition()
             if self.conv_state == LISTENING:
-                self.recorder.start()
+                self._begin_capture()
 
     # ── VAD silence ───────────────────────────────────────────────────────────
     def _on_silence_detected(self):

@@ -22,6 +22,24 @@
     return false;
   }
 
+  // Find a visible, leaf-ish clickable element whose text matches `re`.
+  function findClickable(re) {
+    const els = $$('button, [role="button"], a, div, span');
+    return els.find(e => {
+      const t = (e.textContent || "").trim();
+      return re.test(t) && t.length < 45 && e.offsetParent !== null;
+    });
+  }
+
+  // Snapshot of visible button/CTA text — returned on failure for debugging.
+  function visibleButtons() {
+    return $$('button, [role="button"], a')
+      .filter(e => e.offsetParent !== null)
+      .map(e => (e.textContent || "").trim())
+      .filter(t => t && t.length < 45)
+      .slice(0, 30);
+  }
+
   // In the variant overlay, find the SINGLE-unit row (label has "ml" but no
   // "x N" multiplier) so quantity = that many individual cans, not packs.
   function singleVariantIndex() {
@@ -70,34 +88,44 @@
     const bar = $(CARTBAR);
     const text = bar ? bar.innerText.replace(/\n/g, " | ") : "";
     if (!/item/i.test(text)) return { ok: false, reason: "NOCART", text };
-
-    // Open the cart for review (SPA navigation — content script stays alive)
-    bar.click();
-    await sleep(1500);
-    return { ok: true, text };
+    return { ok: true, text };   // checkout opens the cart itself
   }
 
   async function swiggyCheckout() {
-    // Best effort: proceed → Amazon Pay → place order. Reports honestly.
-    const clickText = (re) => {
-      const el = $$('button, [role="button"], a, div, span')
-        .find(e => re.test((e.textContent || "").trim()) && e.offsetParent !== null);
-      if (el) { el.click(); return true; }
-      return false;
-    };
-    if (!/cart/i.test(location.href)) {
-      const bar = $(CARTBAR);
-      if (bar) { bar.click(); await sleep(1800); }
-    }
-    clickText(/proceed to pay|proceed to checkout|click to pay|^checkout$|continue/i);
-    await sleep(1800);
+    // The service worker opened us directly on the cart page. Let it render.
+    await waitFor('[data-testid="veiwcartbar-container"], button, [role="button"]', 12000);
+    await sleep(1500);
     if (/login|signin/i.test(location.href)) return { ok: false, reason: "LOGIN" };
-    if (!clickText(/amazon pay/i)) return { ok: false, reason: "NOAMAZON" };
-    await sleep(1000);
-    if (!clickText(/place order|pay now|make payment/i)) return { ok: false, reason: "AMAZON_SELECTED" };
-    await sleep(2500);
-    const placed = $$('*').some(e => /order placed|order confirmed|thank you|order id/i.test(e.textContent || ""));
-    return { ok: placed, reason: placed ? "PLACED" : "SUBMITTED" };
+
+    // 1. Proceed to Pay (main cart CTA)
+    const proceed = findClickable(/proceed to pay|proceed to checkout|click to pay|^pay\b|place order|^checkout$/i);
+    if (!proceed) return { ok: false, reason: "NOPROCEED", buttons: visibleButtons(), url: location.href };
+    proceed.click();
+    await sleep(3000);
+    if (/login|signin/i.test(location.href)) return { ok: false, reason: "LOGIN" };
+
+    // 2. Open the Wallet category (some layouts list Amazon Pay directly — skip if so)
+    if (!findClickable(/amazon\s*pay/i)) {
+      const wallet = findClickable(/^wallets?$|pay by wallet|wallet/i);
+      if (wallet) { wallet.click(); await sleep(2000); }
+    }
+
+    // 3. Select Amazon Pay
+    const amazon = findClickable(/amazon\s*pay/i);
+    if (!amazon) return { ok: false, reason: "NOAMAZON", buttons: visibleButtons(), url: location.href };
+    amazon.click();
+    await sleep(2000);
+
+    // 4. Final pay button (e.g. "Pay ₹203", "Place Order", "Pay Now")
+    const pay = findClickable(/pay\s*[₹r]|pay now|place order|make payment|^pay\b|proceed to pay/i);
+    if (!pay) return { ok: false, reason: "NOPAY", buttons: visibleButtons() };
+    pay.click();
+    await sleep(3500);
+
+    const placed = /order placed|order confirmed|thank you|order id|successfully placed|payment successful/i
+      .test(document.body.innerText || "");
+    return placed ? { ok: true, reason: "PLACED" }
+                  : { ok: false, reason: "SUBMITTED", buttons: visibleButtons() };
   }
 
   async function calendarSave() {

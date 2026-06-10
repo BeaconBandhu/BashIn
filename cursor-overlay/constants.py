@@ -42,8 +42,8 @@ TRAIL_MS        = 300
 TICK_MS         = 10
 TAIL_X          = 0
 TAIL_Y          = 0
-DOT_R           = 3       # dot radius (pixels)
-RING_R          = 12      # ring radius
+DOT_R           = 1       # dot radius (pixels)
+RING_R          = 8       # ring radius
 RING_LERP       = 0.10    # ring lag — lower = more trail
 
 NUM_BARS        = 4

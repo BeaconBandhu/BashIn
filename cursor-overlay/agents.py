@@ -28,14 +28,6 @@ SPOTIFY = r"C:\Users\User\AppData\Roaming\Spotify\Spotify.exe"
 pyautogui.FAILSAFE = True
 pyautogui.PAUSE    = 0.04
 
-# ── Multi-turn pending state ───────────────────────────────────────────────────
-_pending: dict = {}
-
-_CONFIRM_RE = re.compile(
-    r"\b(yes|yeah|yep|sure|proceed|checkout|confirm|go ahead|place order|ok|okay)\b", re.I)
-_CANCEL_RE  = re.compile(
-    r"\b(no|nope|cancel|stop|don.?t|never mind|abort)\b", re.I)
-
 
 # ── Intent detection ──────────────────────────────────────────────────────────
 _INTENTS = {
@@ -149,45 +141,47 @@ def swiggy_agent(params: dict, client: OpenAI) -> str:
         logging.error("swiggy: %s", e)
         return f"I hit an error driving Chrome for Swiggy: {str(e)[:120]}"
 
-    logging.info("swiggy: bridge result=%s", res)
-    if isinstance(res, dict) and res.get("ok"):
-        _pending["swiggy_checkout"] = {"product": product, "qty": qty}
-        qty_str = f"{qty}x " if qty > 1 else ""
-        return (f"Added {qty_str}{product} to your cart and opened it for review. "
-                f"Say 'proceed to checkout' to pay with Amazon Pay, or 'cancel' to stop.")
+    logging.info("swiggy: add result=%s", res)
+    if not (isinstance(res, dict) and res.get("ok")):
+        reason = res.get("reason", "") if isinstance(res, dict) else ""
+        if reason in ("NO_EXTENSION", "NO_TAB", "NO_CONTENT", "TIMEOUT"):
+            return ("I couldn't reach the BashIn Chrome extension. Make sure Chrome is open "
+                    "and the BashIn Bridge extension is enabled, then try again.")
+        if reason == "NOPRODUCTS":
+            return (f"I opened Swiggy but couldn't see products for {product} — check the "
+                    f"delivery location is set in Chrome, then ask again.")
+        if reason == "NOVARIANT":
+            return f"A size picker opened for {product} but I couldn't select a single unit."
+        if reason == "NOCART":
+            return f"I clicked add for {product} but couldn't confirm the cart updated."
+        return f"I couldn't add {product} to the Swiggy cart."
 
-    reason = res.get("reason", "") if isinstance(res, dict) else ""
-    if reason in ("NO_EXTENSION", "NO_TAB", "NO_CONTENT", "TIMEOUT"):
-        return ("I couldn't reach the BashIn Chrome extension. Make sure Chrome is open "
-                "and the BashIn Bridge extension is enabled, then try again.")
-    if reason == "NOPRODUCTS":
-        return (f"I opened Swiggy but couldn't see products for {product} — check the "
-                f"delivery location is set in Chrome, then ask again.")
-    if reason == "NOVARIANT":
-        return f"A size picker opened for {product} but I couldn't select a single unit."
-    if reason == "NOCART":
-        return f"I clicked add for {product} but couldn't confirm the cart updated."
-    return f"I couldn't add {product} to the Swiggy cart."
+    # Added to cart — go straight to payment (full auto, no confirmation per user request)
+    return swiggy_checkout(product, client, qty)
 
 
-def swiggy_checkout(product: str, client: OpenAI) -> str:
-    """Best-effort checkout with Amazon Pay. Reports honestly; never fakes success."""
+def swiggy_checkout(product: str, client: OpenAI, qty: int = 1) -> str:
+    """Full auto checkout: cart → proceed to pay → wallet → Amazon Pay → pay."""
     cart_url = "https://www.swiggy.com/instamart/cart"
     try:
-        res = BRIDGE.run_command(cart_url, {"action": "swiggy_checkout"}, timeout=70)
+        res = BRIDGE.run_command(cart_url, {"action": "swiggy_checkout"}, timeout=90)
     except Exception as e:
         logging.error("swiggy_checkout: %s", e)
-        return f"I hit an error during checkout: {str(e)[:120]}"
+        return f"I added {product} but hit an error during checkout: {str(e)[:120]}"
 
-    logging.info("swiggy_checkout: bridge result=%s", res)
-    reason = res.get("reason", "") if isinstance(res, dict) else ""
+    logging.info("swiggy_checkout: result=%s", res)
+    if isinstance(res, dict) and res.get("buttons"):
+        logging.info("swiggy_checkout: visible buttons = %s", res["buttons"])
+    reason  = res.get("reason", "") if isinstance(res, dict) else ""
+    qty_str = f"{qty}x " if qty > 1 else ""
     return {
-        "LOGIN":           "Swiggy wants you to log in before payment. Please log in once in Chrome.",
-        "NOAMAZON":        "I reached checkout but couldn't find Amazon Pay — please pick a payment method on screen.",
-        "AMAZON_SELECTED": "Amazon Pay is selected — tap Place Order on screen to finish.",
-        "PLACED":          f"Order placed for {product} via Amazon Pay!",
-        "SUBMITTED":       f"I submitted the order for {product} — please check the screen to confirm.",
-    }.get(reason, f"I couldn't complete checkout for {product}.")
+        "PLACED":    f"Done — order placed for {qty_str}{product} via Amazon Pay.",
+        "SUBMITTED": f"I went through checkout for {qty_str}{product} with Amazon Pay — please check the screen to confirm payment.",
+        "NOPROCEED": f"I added {qty_str}{product} but couldn't find Proceed to Pay — the store may be unserviceable right now.",
+        "NOAMAZON":  f"I added {qty_str}{product} and reached payment, but couldn't find Amazon Pay in the wallet options.",
+        "NOPAY":     f"I selected Amazon Pay for {qty_str}{product} but couldn't find the final Pay button.",
+        "LOGIN":     "Swiggy wants you to log in before payment. Please log in once in Chrome.",
+    }.get(reason, f"I added {qty_str}{product} but couldn't complete the payment.")
 
 
 # ── Google Calendar Agent (via BashIn extension) ──────────────────────────────
@@ -248,20 +242,6 @@ def calendar_agent(params: dict, client: OpenAI) -> str:
 # ── Orchestrator entry point ──────────────────────────────────────────────────
 def run_agent(text: str, client: OpenAI):
     """Route to specialist. Returns speech string, or None to fall back to GPT-4o."""
-    if "swiggy_checkout" in _pending:
-        # Cancel ALWAYS wins over confirm — if the user says "cancel" anywhere in
-        # the utterance (even alongside "proceed"), never touch payment.
-        if _CANCEL_RE.search(text):
-            info = _pending.pop("swiggy_checkout")
-            logging.info("run_agent: swiggy checkout cancelled for %r", info)
-            return f"Okay, cancelled. {info['product']} is still in your cart but I won't pay."
-        if _CONFIRM_RE.search(text):
-            info = _pending.pop("swiggy_checkout")
-            logging.info("run_agent: swiggy checkout confirmed for %r", info)
-            return swiggy_checkout(info["product"], client)
-        if detect_intent(text) not in ("general", "swiggy"):
-            _pending.pop("swiggy_checkout", None)
-
     intent = detect_intent(text)
     logging.info("run_agent: intent=%s  text=%r", intent, text)
     if intent == "general":

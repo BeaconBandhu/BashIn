@@ -196,7 +196,7 @@ class Overlay(QWidget):
         # Processing: orbit ring + 3 spinning violet dots (matches website cp-orbit)
         if self._ring_pulse > 0:
             now      = time.monotonic()
-            orbit_r  = RING_R + 8
+            orbit_r  = RING_R + 4
             spin     = now * (2 * math.pi / 1.4)   # full rotation every 1.4s
 
             # Indigo glow ring
@@ -211,7 +211,7 @@ class Overlay(QWidget):
                 ox = int(cx + orbit_r * math.cos(a))
                 oy = int(cy + orbit_r * math.sin(a))
                 p.setBrush(QBrush(QColor(139, 92, 246, 235)))
-                p.drawEllipse(ox - 2, oy - 2, 4, 4)
+                p.drawEllipse(ox - 1, oy - 1, 2, 2)
 
             # Indigo dot at center
             p.setBrush(QBrush(QColor(129, 140, 248, 220)))
