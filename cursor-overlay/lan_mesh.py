@@ -39,7 +39,16 @@ import agents
 from openai import OpenAI
 
 SERVICE_TYPE          = "_bashin._tcp.local."
-REGISTRY_STALE_SECS   = 30
+# NOTE: device online/offline is driven by zeroconf's OWN remove_service signal
+# (a real goodbye packet, or genuine mDNS record TTL expiry) -- NOT a short
+# local timestamp guess. zeroconf's add_service/update_service callbacks only
+# fire on actual network events, which can be many minutes apart in steady
+# state; evicting a registry entry just because no NEW event arrived within a
+# short window was wrongly marking fully-online devices as offline. This is a
+# generous safety net only (registry-leak guard if remove_service is ever
+# missed), not the eviction mechanism -- see _DeviceListener.remove_service.
+REGISTRY_STALE_SECS   = 6 * 3600
+SWEEP_INTERVAL_SECS   = 900
 NONCE_WINDOW_SECS     = 60
 PAIR_CODE_WINDOW_SECS = 120
 
@@ -57,7 +66,11 @@ def _lan_ip() -> str:
 
 
 class _DeviceListener:
-    """zeroconf ServiceListener -- updates the mesh's live registry on add/update."""
+    """zeroconf ServiceListener -- updates the mesh's live registry on add/update,
+    and EVICTS on remove_service -- zeroconf's own "this device is genuinely
+    gone" signal (an explicit goodbye packet, or real mDNS record TTL expiry).
+    This is the actual online/offline source of truth; see REGISTRY_STALE_SECS
+    for why a local timestamp guess was wrong."""
     def __init__(self, mesh: "LanMesh"):
         self._mesh = mesh
 
@@ -68,11 +81,16 @@ class _DeviceListener:
         self._resolve(zc, type_, name)
 
     def remove_service(self, zc, type_, name):
-        pass   # the staleness sweep cleans up expired entries either way
+        with self._mesh._lock:
+            device_id = self._mesh._name_to_id.pop(name, None)
+            if device_id:
+                self._mesh._registry.pop(device_id, None)
+        if device_id:
+            logging.info("lan_mesh: %s went away (zeroconf remove_service)", name)
 
     def _resolve(self, zc, type_, name):
         try:
-            info = zc.get_service_info(type_, name, timeout=2000)
+            info = zc.get_service_info(type_, name, timeout=3000)
             if not info or not info.addresses:
                 return
             props = {k.decode(): v.decode() for k, v in info.properties.items()}
@@ -82,6 +100,7 @@ class _DeviceListener:
                 return   # ignore our own advertisement
             addr = socket.inet_ntoa(info.addresses[0])
             with self._mesh._lock:
+                self._mesh._name_to_id[name] = device_id
                 self._mesh._registry[device_id] = {
                     "device_id": device_id, "name": device_name,
                     "ip": addr, "port": info.port, "last_seen": time.time(),
@@ -97,6 +116,7 @@ class LanMesh:
         self.mesh_port   = None
         self._paired     = {}     # device_id -> {"name", "secret", "paired_at"}
         self._registry   = {}     # device_id -> {"name","ip","port","last_seen"}
+        self._name_to_id = {}     # zeroconf service name -> device_id (for remove_service)
         self._lock       = threading.Lock()
 
         self._loop          = None
@@ -176,7 +196,7 @@ class LanMesh:
             logging.info("lan_mesh: listening on 0.0.0.0:%d as %r (%s)",
                          self.mesh_port, self.device_name, self.device_id)
             self._ready.set()
-            self._loop.call_later(15, self._sweep_stale)
+            self._loop.call_later(SWEEP_INTERVAL_SECS, self._sweep_stale)
             await asyncio.Future()   # run forever, until stop() cancels the loop
 
     def _advertise(self):
@@ -198,15 +218,24 @@ class LanMesh:
                           "This can happen if multicast is blocked on this network.", e)
 
     def _sweep_stale(self):
+        """Generous safety net only -- real eviction is remove_service-driven
+        (see _DeviceListener). This just guards against a registry entry being
+        stranded forever in the rare case zeroconf ever misses a removal event,
+        and prunes the nonce replay cache."""
         cutoff = time.time() - REGISTRY_STALE_SECS
         with self._lock:
             dead = [k for k, v in self._registry.items() if v["last_seen"] < cutoff]
             for k in dead:
                 del self._registry[k]
+            if dead:
+                dead_set = set(dead)
+                stale_names = [n for n, did in self._name_to_id.items() if did in dead_set]
+                for n in stale_names:
+                    del self._name_to_id[n]
         now = time.time()
         self._nonce_cache = {n: exp for n, exp in self._nonce_cache.items() if exp > now}
         if self._loop:
-            self._loop.call_later(15, self._sweep_stale)
+            self._loop.call_later(SWEEP_INTERVAL_SECS, self._sweep_stale)
 
     # ── registry (public, safe from any thread) ─────────────────────────────────
     def list_devices(self) -> list:
