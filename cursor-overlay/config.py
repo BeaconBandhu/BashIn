@@ -1,15 +1,23 @@
 """
 Config file helpers and Windows startup-registry management.
+
+The registry-based autostart (register/unregister/registered) is Windows-only;
+on other platforms (e.g. a headless Linux edge node) those functions are no-ops
+so this module -- and lan_mesh.py, which depends on it for device identity --
+stays importable everywhere. Use your platform's own autostart mechanism
+(systemd, launchd, cron @reboot, etc.) on non-Windows machines instead.
 """
-import os, json, socket, uuid, winreg
+import os, sys, json, socket, uuid
 from constants import BASE_DIR, CONFIG_PATH
 
 MESH_PORT_DEFAULT = 8790   # distinct from chrome_bridge.py's 8777
 
-_STARTUP_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
-_APP_NAME    = "CursorOverlay"
-_PYTHONW     = r"C:\Users\User\AppData\Local\Programs\Python\Python311\pythonw.exe"
-_SCRIPT      = os.path.join(BASE_DIR, "main.py")
+if sys.platform == "win32":
+    import winreg
+    _STARTUP_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
+    _APP_NAME    = "CursorOverlay"
+    _PYTHONW     = r"C:\Users\User\AppData\Local\Programs\Python\Python311\pythonw.exe"
+    _SCRIPT      = os.path.join(BASE_DIR, "main.py")
 
 
 def load_cfg():
@@ -47,29 +55,37 @@ def ensure_identity(cfg: dict) -> dict:
     return cfg
 
 
-def register():
-    try:
-        k = winreg.OpenKey(winreg.HKEY_CURRENT_USER, _STARTUP_KEY, 0, winreg.KEY_SET_VALUE)
-        winreg.SetValueEx(k, _APP_NAME, 0, winreg.REG_SZ, f'"{_PYTHONW}" "{_SCRIPT}"')
-        winreg.CloseKey(k)
-    except Exception:
+if sys.platform == "win32":
+    def register():
+        try:
+            k = winreg.OpenKey(winreg.HKEY_CURRENT_USER, _STARTUP_KEY, 0, winreg.KEY_SET_VALUE)
+            winreg.SetValueEx(k, _APP_NAME, 0, winreg.REG_SZ, f'"{_PYTHONW}" "{_SCRIPT}"')
+            winreg.CloseKey(k)
+        except Exception:
+            pass
+
+    def unregister():
+        try:
+            k = winreg.OpenKey(winreg.HKEY_CURRENT_USER, _STARTUP_KEY, 0, winreg.KEY_SET_VALUE)
+            winreg.DeleteValue(k, _APP_NAME)
+            winreg.CloseKey(k)
+        except Exception:
+            pass
+
+    def registered():
+        try:
+            k = winreg.OpenKey(winreg.HKEY_CURRENT_USER, _STARTUP_KEY)
+            winreg.QueryValueEx(k, _APP_NAME)
+            winreg.CloseKey(k)
+            return True
+        except Exception:
+            return False
+else:
+    def register():
+        pass   # use systemd/launchd/cron on non-Windows instead
+
+    def unregister():
         pass
 
-
-def unregister():
-    try:
-        k = winreg.OpenKey(winreg.HKEY_CURRENT_USER, _STARTUP_KEY, 0, winreg.KEY_SET_VALUE)
-        winreg.DeleteValue(k, _APP_NAME)
-        winreg.CloseKey(k)
-    except Exception:
-        pass
-
-
-def registered():
-    try:
-        k = winreg.OpenKey(winreg.HKEY_CURRENT_USER, _STARTUP_KEY)
-        winreg.QueryValueEx(k, _APP_NAME)
-        winreg.CloseKey(k)
-        return True
-    except Exception:
+    def registered():
         return False

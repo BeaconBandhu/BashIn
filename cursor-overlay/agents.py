@@ -1,6 +1,5 @@
 import re, time, json, logging, os, subprocess, datetime
 from urllib.parse import quote
-import pyautogui
 from openai import OpenAI
 
 from screen       import capture_screen
@@ -10,8 +9,21 @@ import forms_agent
 MAX_RETRIES = 3
 SPOTIFY = r"C:\Users\User\AppData\Roaming\Spotify\Spotify.exe"
 
-pyautogui.FAILSAFE = True
-pyautogui.PAUSE    = 0.04
+# pyautogui needs a real display (X11/Wayland/Windows desktop) to import cleanly
+# -- guard it so a headless edge node (e.g. Linux with no display server) can
+# still import this module and run the browser-based agents (swiggy/calendar/
+# forms, via chrome_bridge -- no pyautogui involved). Only spotify_agent
+# actually needs pyautogui; it checks _PYAUTOGUI_OK itself and fails gracefully.
+try:
+    import pyautogui
+    pyautogui.FAILSAFE = True
+    pyautogui.PAUSE    = 0.04
+    _PYAUTOGUI_OK = True
+except Exception as _e:
+    pyautogui = None
+    _PYAUTOGUI_OK = False
+    logging.warning("agents: pyautogui unavailable (%s) -- Spotify agent will be disabled "
+                    "on this device; Swiggy/Calendar/Forms are unaffected.", _e)
 
 
 #  Intent detection 
@@ -79,6 +91,8 @@ def verify(expected: str, client: OpenAI) -> bool:
 
 # ── Spotify Agent (desktop app, pyautogui — already reliable) ─────────────────
 def spotify_agent(params: dict, client: OpenAI) -> str:
+    if not _PYAUTOGUI_OK:
+        return "This device can't control the desktop (no display available), so it can't play Spotify."
     song   = params.get("song", "").strip()
     artist = params.get("artist", "").strip()
     query  = f"{song} {artist}".strip() if artist else song

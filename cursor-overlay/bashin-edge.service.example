@@ -1,0 +1,30 @@
+# Example systemd unit for running edge_node.py as a background service on a
+# Linux edge device (equivalent to config.py's Windows registry autostart).
+#
+# Setup:
+#   1. Copy this file to /etc/systemd/system/bashin-edge.service
+#   2. Edit User=, WorkingDirectory=, and ExecStart= for your paths/user
+#   3. sudo systemctl daemon-reload
+#   4. sudo systemctl enable --now bashin-edge
+#   5. journalctl -u bashin-edge -f      # to watch logs
+#
+# Note: edge_node.py's interactive pairing menu (stdin) won't work under
+# systemd. Pair the device FIRST by running `python3 edge_node.py` directly in
+# a terminal (steps p/e), THEN switch it over to the service for ongoing use --
+# pairing is persisted in config.json, so the service doesn't need the menu.
+
+[Unit]
+Description=BashIn edge node (LAN mesh dispatch target)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=YOUR_USERNAME
+WorkingDirectory=/path/to/BashIn/cursor-overlay
+ExecStart=/usr/bin/python3 /path/to/BashIn/cursor-overlay/edge_node.py
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

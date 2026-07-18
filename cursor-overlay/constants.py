@@ -1,15 +1,27 @@
 """
 Win32 handles, app states, and all layout/size constants.
 Imported by every other module — no PyQt6 imports here.
+
+Win32-only symbols (user32/kernel32/dwmapi and the constants that use them) are
+only meaningful on Windows, where the full voice-overlay GUI runs. On other
+platforms (e.g. a headless Linux edge node that only runs lan_mesh.py +
+agents.execute_intent to receive dispatched tasks), those symbols are left as
+None rather than raising ImportError -- code that actually needs them only
+runs on Windows anyway (app.py, widgets.py), so this keeps constants.py (and
+everything that transitively imports it, like config.py/lan_mesh.py) safely
+importable everywhere.
 """
-import os, ctypes
+import os, sys, ctypes
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-# ── Win32 ──────────────────────────────────────────────────────────────────────
-user32   = ctypes.windll.user32
-kernel32 = ctypes.windll.kernel32
-dwmapi   = ctypes.windll.dwmapi
+# ── Win32 (None on non-Windows platforms -- see module docstring) ──────────────
+if sys.platform == "win32":
+    user32   = ctypes.windll.user32
+    kernel32 = ctypes.windll.kernel32
+    dwmapi   = ctypes.windll.dwmapi
+else:
+    user32 = kernel32 = dwmapi = None
 
 GWL_EXSTYLE       = -20
 WS_EX_LAYERED     = 0x00080000
