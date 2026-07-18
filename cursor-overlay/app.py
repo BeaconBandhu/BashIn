@@ -9,7 +9,7 @@ import numpy as np
 import sounddevice as sd
 from openai import OpenAI
 
-from PyQt6.QtWidgets import QApplication, QSystemTrayIcon, QMenu, QInputDialog
+from PyQt6.QtWidgets import QApplication, QSystemTrayIcon, QMenu, QInputDialog, QMessageBox
 from PyQt6.QtCore    import Qt, QTimer
 from PyQt6.QtGui     import QPainter, QPen, QColor, QBrush, QIcon, QPixmap
 
@@ -21,14 +21,15 @@ from constants import (
     CIRCLE_HALF, TRAIL_MS, TICK_MS, TAIL_X, TAIL_Y,
     TRANS_DURATION, RING_LERP,
 )
-from config  import load_cfg, save_cfg, register, unregister, registered
+from config  import load_cfg, save_cfg, register, unregister, registered, ensure_identity
 from audio   import WakeWordListener, VoiceRecorder
 from screen  import capture_screen, GUIDE_SYS, APP_ANALYZE_PROMPT
 from bridge   import Bridge
 from widgets  import Overlay, ResponseBubble
 from execute  import run_step
-from agents   import run_agent
+import agents
 from chrome_bridge import BRIDGE
+import lan_mesh
 
 
 class App:
@@ -66,7 +67,7 @@ class App:
         self._app_context     = ""     # GPT-4o description of current app/screen
         self._last_app_name   = ""     # detect app switches
 
-        cfg = load_cfg()
+        cfg = ensure_identity(load_cfg())
         self.api_key     = cfg.get("openai_api_key", "")
         self.wake_phrase = cfg.get("wake_phrase", "hey")
 
@@ -104,9 +105,16 @@ class App:
         self.bridge.begin_processing.connect(self._on_begin_processing)
         self.bridge.start_speaking.connect(self._on_start_speaking)
         self.bridge.stop_speaking.connect(self._on_stop_speaking)
+        self.bridge.mesh_pairing_result.connect(self._on_pairing_result)
 
         self.timer = QTimer(); self.timer.timeout.connect(self._tick)
         self.timer.start(TICK_MS)
+
+        # Periodic tray "Devices" list refresh (mirrors _anim_timer's pattern) —
+        # polls lan_mesh's lock-protected registry snapshot, safe from the Qt thread.
+        self._mesh_timer = QTimer(); self._mesh_timer.setInterval(3000)
+        self._mesh_timer.timeout.connect(self._refresh_devices_menu)
+        self._mesh_timer.start()
 
         self._build_tray()
         # Start the local WS server so the BashIn Chrome extension can connect
@@ -114,6 +122,13 @@ class App:
             BRIDGE.start()
         except Exception as e:
             logging.warning("BRIDGE.start failed: %s", e)
+        # Start the LAN device mesh (discovery + dispatch server) for cross-PC tasks
+        try:
+            lan_mesh.MESH.set_pairing_result_callback(
+                lambda ok, msg: self.bridge.mesh_pairing_result.emit(ok, msg))
+            lan_mesh.MESH.start()
+        except Exception as e:
+            logging.warning("lan_mesh.MESH.start failed: %s", e)
         threading.Thread(target=self._hotkey_loop, daemon=True).start()
         if not registered():
             register()
@@ -147,10 +162,65 @@ class App:
         m.addAction("Set Wake Phrase",                 self._prompt_wake_phrase)
         m.addAction("Clear conversation history",      self._clear_history)
         m.addSeparator()
+        self._devices_menu = m.addMenu("Devices")      # rebuilt by _refresh_devices_menu()
+        m.addAction("Pair New Device...",              self._pair_new_device)
+        m.addAction("Enter Pairing Code...",           self._enter_pairing_code)
+        m.addSeparator()
         m.addAction("Remove from startup",             unregister)
         m.addAction("Quit",                            self._quit)
         self.tray.setContextMenu(m)
         self.tray.show()
+
+    # ── LAN device mesh (tray UI) ─────────────────────────────────────────────
+    def _refresh_devices_menu(self):
+        self._devices_menu.clear()
+        devices = [d for d in lan_mesh.MESH.list_devices() if d.get("paired")]
+        if not devices:
+            a = self._devices_menu.addAction("No paired devices yet")
+            a.setEnabled(False)
+            return
+        for d in devices:
+            online = bool(d.get("ip"))
+            dot = "●" if online else "○"
+            state = "online" if online else "offline"
+            a = self._devices_menu.addAction(f"{dot} {d['name']} ({state})")
+            a.setEnabled(False)
+
+    def _pair_new_device(self):
+        code = lan_mesh.MESH.begin_pairing()
+        QMessageBox.information(
+            None, "Pairing Code",
+            f"Enter this code on the OTHER device (Tray → Enter Pairing Code) "
+            f"within 2 minutes:\n\n{code}")
+
+    def _enter_pairing_code(self):
+        candidates = [d for d in lan_mesh.MESH.list_devices() if not d.get("paired")]
+        if not candidates:
+            QMessageBox.information(
+                None, "Enter Pairing Code",
+                "No unpaired devices found on this network yet. Make sure both "
+                "devices are on the same WiFi/LAN, and that the other device has "
+                "clicked \"Pair New Device...\" to show its code.")
+            return
+        names = [d["name"] for d in candidates]
+        name, ok = QInputDialog.getItem(None, "Enter Pairing Code",
+                                        "Which device?", names, 0, False)
+        if not ok:
+            return
+        target = next(d for d in candidates if d["name"] == name)
+        code, ok = QInputDialog.getText(None, "Enter Pairing Code",
+                                        f"Code shown on {name}:")
+        if not ok or not code.strip():
+            return
+        # attempt_pairing blocks briefly (≤ ~13s); acceptable on a tray-action click
+        lan_mesh.MESH.attempt_pairing(target["device_id"], code.strip())
+
+    def _on_pairing_result(self, ok: bool, msg: str):
+        self.tray.showMessage(
+            "Cursor Overlay", msg,
+            QSystemTrayIcon.MessageIcon.Information if ok
+            else QSystemTrayIcon.MessageIcon.Warning, 4000)
+        self._refresh_devices_menu()
 
     def _prompt_api_key(self):
         key, ok = QInputDialog.getText(None, "OpenAI API Key", "Paste your OpenAI API key:")
@@ -372,8 +442,16 @@ class App:
             if not text:
                 return
 
-            # ── Specialist agent fast path ────────────────────────────────────
-            agent_result = run_agent(text, client)
+            # ── Specialist agent fast path (local, or dispatched to a paired LAN device) ──
+            intent, params = agents.route_intent(text, client)
+            target_id = lan_mesh.MESH.match_device_mention(text) if intent != "general" else None
+            if target_id:
+                agent_result = lan_mesh.MESH.dispatch(target_id, intent, params,
+                                                      raw_text=text, timeout=45)
+            elif intent != "general":
+                agent_result = agents.execute_intent(intent, params, client, raw_text=text)
+            else:
+                agent_result = None
             if agent_result is not None:
                 self._conv_history.append({"role": "user",      "content": text})
                 self._conv_history.append({"role": "assistant", "content": agent_result})

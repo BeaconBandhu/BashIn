@@ -15,3 +15,4 @@ class Bridge(QObject):
     begin_processing = pyqtSignal()
     start_speaking   = pyqtSignal()
     stop_speaking    = pyqtSignal()
+    mesh_pairing_result = pyqtSignal(bool, str)   # (ok, message) from lan_mesh background thread

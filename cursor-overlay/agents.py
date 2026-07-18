@@ -1,19 +1,3 @@
-"""
-Multi-agent orchestrator for BashIn.
-
-Web agents (Swiggy, Calendar) drive the user's OWN logged-in Chrome through the
-BashIn Bridge extension (see extension/ + chrome_bridge.py): BashIn opens the page
-as a tab in the real Chrome and the extension's content script performs real DOM
-clicks. No separate profile, no screenshots, no coordinate guessing.
-Spotify stays on the desktop app via pyautogui.
-
-Flow per command:
-  1. Regex intent detection   — instant, no LLM
-  2. gpt-4o-mini param extract — song/product/event + qty/time
-  3. Specialist agent executes — extension (web) or pyautogui (Spotify)
-  4. Deterministic result      — DOM state from the content script, not vision
-  5. Honest success/failure    — never claims success it can't observe
-"""
 import re, time, json, logging, os, subprocess, datetime
 from urllib.parse import quote
 import pyautogui
@@ -21,6 +5,7 @@ from openai import OpenAI
 
 from screen       import capture_screen
 from chrome_bridge import BRIDGE
+import forms_agent
 
 MAX_RETRIES = 3
 SPOTIFY = r"C:\Users\User\AppData\Roaming\Spotify\Spotify.exe"
@@ -29,11 +14,12 @@ pyautogui.FAILSAFE = True
 pyautogui.PAUSE    = 0.04
 
 
-# ── Intent detection ──────────────────────────────────────────────────────────
+#  Intent detection 
 _INTENTS = {
     "spotify":  re.compile(r"\b(spotify|play\b|song|music|artist|album|track)\b", re.I),
     "swiggy":   re.compile(r"\b(swiggy|instamart|insta\s*mart|order\b|grocery|groceries|deliver)\b", re.I),
     "calendar": re.compile(r"\b(calendar|event|meeting|schedule|remind|appointment|add.{0,20}task)\b", re.I),
+    "form":     re.compile(r"\b(form|autofill|fill.{0,15}(form|application|survey)|questionnaire|survey|application)\b", re.I),
 }
 
 def detect_intent(text: str) -> str:
@@ -43,7 +29,7 @@ def detect_intent(text: str) -> str:
     return "general"
 
 
-# ── Fast param extraction via gpt-4o-mini ─────────────────────────────────────
+# ── Fast param extraction via gpt-4o-mini 
 _PARAM_SYS = {
     "spotify":  'Extract the song name and artist from the user request. Return valid JSON only: {"song":"...","artist":"..."}. Set artist to "" if not mentioned.',
     "swiggy":   'Extract the product name and quantity from the order request. Return valid JSON only: {"product":"...","quantity":1}.',
@@ -240,22 +226,34 @@ def calendar_agent(params: dict, client: OpenAI) -> str:
 
 
 # ── Orchestrator entry point ──────────────────────────────────────────────────
-def run_agent(text: str, client: OpenAI):
-    """Route to specialist. Returns speech string, or None to fall back to GPT-4o."""
+def route_intent(text: str, client: OpenAI) -> tuple[str, dict]:
+    """Regex intent detection + gpt-4o-mini param extraction. No execution --
+    lets a caller (local or a remote dispatch handler) decide where to run it."""
     intent = detect_intent(text)
-    logging.info("run_agent: intent=%s  text=%r", intent, text)
-    if intent == "general":
-        return None
+    params = {} if intent in ("general", "form") else extract_params(intent, text, client)
+    logging.info("route_intent: intent=%s  params=%s", intent, params)
+    return intent, params
 
-    params = extract_params(intent, text, client)
-    logging.info("run_agent: params=%s", params)
 
+def execute_intent(intent: str, params: dict, client: OpenAI, raw_text: str | None = None) -> str | None:
+    """Runs a known intent+params and returns the spoken result, or None if the
+    intent isn't handled. `raw_text` is only needed by 'form' (forms_agent needs
+    full context for its scan/answer pipeline) -- ignored otherwise."""
     t0 = time.monotonic()
     if   intent == "spotify":  result = spotify_agent(params, client)
     elif intent == "swiggy":   result = swiggy_agent(params, client)
     elif intent == "calendar": result = calendar_agent(params, client)
+    elif intent == "form":     result = forms_agent.form_agent(raw_text or "", client)
     else:                      return None
 
-    logging.info("run_agent: intent=%s  elapsed=%.2fs  result=%r",
+    logging.info("execute_intent: intent=%s  elapsed=%.2fs  result=%r",
                  intent, time.monotonic() - t0, result)
     return result
+
+
+def run_agent(text: str, client: OpenAI):
+    """Route to specialist. Returns speech string, or None to fall back to GPT-4o."""
+    intent, params = route_intent(text, client)
+    if intent == "general":
+        return None
+    return execute_intent(intent, params, client, raw_text=text)

@@ -1,8 +1,10 @@
 """
 Config file helpers and Windows startup-registry management.
 """
-import os, json, winreg
+import os, json, socket, uuid, winreg
 from constants import BASE_DIR, CONFIG_PATH
+
+MESH_PORT_DEFAULT = 8790   # distinct from chrome_bridge.py's 8777
 
 _STARTUP_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 _APP_NAME    = "CursorOverlay"
@@ -21,6 +23,28 @@ def load_cfg():
 def save_cfg(cfg):
     with open(CONFIG_PATH, "w") as f:
         json.dump(cfg, f, indent=2)
+
+
+def ensure_identity(cfg: dict) -> dict:
+    """Fills device_id/device_name/mesh_port/paired_devices if missing (LAN mesh
+    identity), persists the change, and returns cfg. Backward-compatible with
+    config.json files from before the mesh feature existed."""
+    changed = False
+    if "device_id" not in cfg:
+        cfg["device_id"] = str(uuid.uuid4())
+        changed = True
+    if "device_name" not in cfg:
+        cfg["device_name"] = socket.gethostname()
+        changed = True
+    if "mesh_port" not in cfg:
+        cfg["mesh_port"] = MESH_PORT_DEFAULT
+        changed = True
+    if "paired_devices" not in cfg:
+        cfg["paired_devices"] = {}
+        changed = True
+    if changed:
+        save_cfg(cfg)
+    return cfg
 
 
 def register():
