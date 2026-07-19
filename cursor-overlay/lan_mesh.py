@@ -28,7 +28,7 @@ fail on guest WiFi with client isolation or some corporate networks -- callers
 should surface list_devices() being empty as an explanatory message, not a
 silent failure.
 """
-import asyncio, hashlib, hmac, json, logging, secrets, socket, threading, time
+import asyncio, difflib, hashlib, hmac, json, logging, re, secrets, socket, threading, time
 from datetime import datetime, timezone
 
 import websockets
@@ -254,15 +254,40 @@ class LanMesh:
                                "ip": None, "port": None, "last_seen": 0, "paired": True})
             return out
 
+    # Fuzzy fallback threshold for match_device_mention. Chosen from real STT
+    # mis-transcriptions of "ARAXYS": "Arexis" scored 0.667, "RxJS" scored 0.600,
+    # while ordinary command vocabulary (raspberry, cart, instamart, maggi, ...)
+    # topped out at 0.400 -- a clear margin at 0.6.
+    _FUZZY_THRESHOLD = 0.6
+
     def match_device_mention(self, text: str):
-        """Case-insensitive substring match of `text` against paired device names
-        (longest name first, so a specific name wins over a shorter substring)."""
+        """Find a paired device named in `text`. Tries an exact case-insensitive
+        substring match first (longest name wins, so a specific name beats a
+        shorter substring of it); falls back to fuzzy word matching, since STT
+        often mangles unusual device names (e.g. "ARAXYS" heard as "Arexis" or
+        even "RxJS") -- an exact match alone would silently miss those and the
+        task would run locally instead of being routed, with no indication why."""
         text_l = (text or "").lower()
-        candidates = [d for d in self.list_devices() if d["paired"]]
-        candidates.sort(key=lambda d: len(d["name"] or ""), reverse=True)
+        candidates = [d for d in self.list_devices() if d["paired"] and d.get("name")]
+        candidates.sort(key=lambda d: len(d["name"]), reverse=True)
+
         for d in candidates:
-            if d["name"] and d["name"].lower() in text_l:
+            if d["name"].lower() in text_l:
                 return d["device_id"]
+
+        words = re.findall(r"[a-z0-9]+", text_l)
+        best_id, best_ratio = None, 0.0
+        for d in candidates:
+            name_l = d["name"].lower()
+            for w in words:
+                if len(w) < 3:
+                    continue
+                ratio = difflib.SequenceMatcher(None, w, name_l).ratio()
+                if ratio > best_ratio:
+                    best_ratio, best_id = ratio, d["device_id"]
+        if best_id is not None and best_ratio >= self._FUZZY_THRESHOLD:
+            logging.info("lan_mesh: fuzzy device match (ratio=%.3f) -> %s", best_ratio, best_id)
+            return best_id
         return None
 
     def _resolve_target(self, target: str):

@@ -424,11 +424,19 @@ class App:
         try:
             client = OpenAI(api_key=self.api_key)
 
-            # Whisper prompt: domain vocab reduces accent misreadings
+            # Whisper prompt: domain vocab reduces accent misreadings. Paired LAN
+            # device names are included too -- they're often unusual/invented
+            # proper nouns (e.g. "ARAXYS") that Whisper otherwise mis-transcribes
+            # (seen in practice as "Arexis", "RxJS", etc.), which silently breaks
+            # device-name matching for cross-PC dispatch further down.
+            _paired_names = ", ".join(
+                d["name"] for d in lan_mesh.MESH.list_devices() if d.get("paired") and d.get("name")
+            )
             _WHISPER_PROMPT = (
                 f"BashIn, {self._app_name}, cursor overlay, overlay.py, mesh-ai, "
                 "Python, PyQt6, GitHub, VS Code, file, folder, Bluetooth, settings, "
                 "open, close, show, hide, help me, how do I, can you, please"
+                + (f", {_paired_names}" if _paired_names else "")
             )
 
             with open(wav_path, "rb") as f:
@@ -445,6 +453,9 @@ class App:
             # ── Specialist agent fast path (local, or dispatched to a paired LAN device) ──
             intent, params = agents.route_intent(text, client)
             target_id = lan_mesh.MESH.match_device_mention(text) if intent != "general" else None
+            logging.info("_process: intent=%s target_device=%s (paired devices=%s)",
+                        intent, target_id,
+                        [d["name"] for d in lan_mesh.MESH.list_devices() if d.get("paired")])
             if target_id:
                 agent_result = lan_mesh.MESH.dispatch(target_id, intent, params,
                                                       raw_text=text, timeout=45)
