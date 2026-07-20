@@ -174,6 +174,8 @@ class App:
     # ── LAN device mesh (tray UI) ─────────────────────────────────────────────
     def _refresh_devices_menu(self):
         self._devices_menu.clear()
+        self._devices_menu.addAction("↻ Refresh Now", self._manual_refresh_devices)
+        self._devices_menu.addSeparator()
         devices = [d for d in lan_mesh.MESH.list_devices() if d.get("paired")]
         if not devices:
             a = self._devices_menu.addAction("No paired devices yet")
@@ -185,6 +187,15 @@ class App:
             state = "online" if online else "offline"
             a = self._devices_menu.addAction(f"{dot} {d['name']} ({state})")
             a.setEnabled(False)
+
+    def _manual_refresh_devices(self):
+        """Force a fresh mDNS query burst (instead of waiting on the 3s poll
+        timer / zeroconf's own backoff) and redraw the menu -- once right away
+        with whatever's currently known, and again shortly after once any new
+        replies have had time to arrive."""
+        lan_mesh.MESH.refresh()
+        self._refresh_devices_menu()
+        QTimer.singleShot(2000, self._refresh_devices_menu)
 
     def _pair_new_device(self):
         code = lan_mesh.MESH.begin_pairing()

@@ -171,6 +171,35 @@ class LanMesh:
         if self._loop:
             self._loop.call_soon_threadsafe(self._loop.stop)
 
+    def refresh(self):
+        """Force a fresh mDNS query burst right now (re-creates the
+        ServiceBrowser) instead of waiting on zeroconf's own backoff schedule --
+        for a manual "Refresh Devices" UI action. Fire-and-forget: results land
+        in the registry asynchronously as replies arrive, same as normal
+        discovery; callers should re-poll list_devices() shortly after.
+
+        Runs the actual zeroconf calls on a plain executor thread, NOT a
+        coroutine on this mesh's own event loop -- zeroconf's sync API can
+        deadlock if called from a coroutine on an already-busy loop on the
+        same thread (see the comment in _run() for the same issue during
+        startup advertising)."""
+        if self._loop is None or self._zc is None:
+            return
+
+        def _do():
+            try:
+                if self._browser:
+                    self._browser.cancel()
+                self._browser = ServiceBrowser(self._zc, SERVICE_TYPE, _DeviceListener(self))
+                logging.info("lan_mesh: refresh -- re-browsing for devices")
+            except Exception as e:
+                logging.error("lan_mesh: refresh failed: %s", e)
+
+        async def _run_it():
+            await self._loop.run_in_executor(None, _do)
+
+        asyncio.run_coroutine_threadsafe(_run_it(), self._loop)
+
     def _run(self):
         # zeroconf's async engine detects "the" event loop on the calling thread;
         # if we set OUR OWN loop first and then call zeroconf's sync API from a
