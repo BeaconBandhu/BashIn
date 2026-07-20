@@ -19,6 +19,9 @@ screen.png
 cursor-overlay/swiggy_debug.png
 cursor-overlay/calendar_debug.png
 
+# Runtime task-history log (grows locally per device, not shared state)
+cursor-overlay/mesh_tasks.jsonl
+
 # BashIn automation Chrome profile — holds login cookies, NEVER commit
 cursor-overlay/chrome_bashin_profile/
 
@@ -30,3 +33,5 @@ cloudflared.exe
 
 # Media not needed in repo
 WhatsApp Image 2026-05-22 at 6.36.44 AM.jpeg
+
+.vercel

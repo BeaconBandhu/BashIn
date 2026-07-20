@@ -20,6 +20,10 @@ Notes:
     instead of crashing (see agents.py's _PYAUTOGUI_OK guard).
   - This machine needs its OWN OpenAI API key set (option 's' below) --
     each device executes with its own key; the sender's key is never sent.
+  - Install psutil too (`pip3 install psutil`) if you want this device's RAM/
+    CPU/battery/temperature to show up in the dashboard (Tray -> Open
+    Dashboard, on whichever machine runs the full GUI). Without it, this
+    device just reports "psutil not installed" instead of crashing.
 """
 import logging
 

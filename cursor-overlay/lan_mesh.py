@@ -36,8 +36,10 @@ from zeroconf import ServiceInfo, Zeroconf, ServiceBrowser
 
 import config
 import agents
+import task_history
 from openai import OpenAI
 
+TELEMETRY_INTERVAL_SECS = 10
 SERVICE_TYPE          = "_bashin._tcp.local."
 # NOTE: device online/offline is driven by zeroconf's OWN remove_service signal
 # (a real goodbye packet, or genuine mDNS record TTL expiry) -- NOT a short
@@ -63,6 +65,57 @@ def _lan_ip() -> str:
         return "127.0.0.1"
     finally:
         s.close()
+
+
+def _collect_telemetry() -> dict:
+    """This machine's current stats, for the dashboard. Battery and CPU temp
+    are frequently unavailable and MUST degrade to None rather than a fake
+    number -- e.g. a desktop PC has no battery at all (psutil.sensors_battery()
+    returns None), and psutil doesn't implement sensors_temperatures() on
+    Windows at all (raises AttributeError, not just an empty result). Runs
+    psutil calls, which do a bit of blocking I/O (esp. temperature sensors on
+    Linux, reading /sys) -- callers should run this via run_in_executor, not
+    directly on the mesh's own event loop."""
+    try:
+        import psutil
+    except ImportError:
+        return {"error": "psutil not installed on this device"}
+
+    stats = {
+        "ram_used_gb": None, "ram_total_gb": None, "ram_pct": None,
+        "cpu_pct": None, "cpu_count": None,
+        "battery_pct": None, "battery_plugged": None,
+        "cpu_temp_c": None,
+    }
+    try:
+        vm = psutil.virtual_memory()
+        stats["ram_used_gb"]  = round(vm.used / 1e9, 2)
+        stats["ram_total_gb"] = round(vm.total / 1e9, 2)
+        stats["ram_pct"]      = vm.percent
+    except Exception as e:
+        logging.debug("lan_mesh: telemetry RAM read failed: %s", e)
+    try:
+        stats["cpu_pct"]   = psutil.cpu_percent(interval=None)
+        stats["cpu_count"] = psutil.cpu_count() or None
+    except Exception as e:
+        logging.debug("lan_mesh: telemetry CPU read failed: %s", e)
+    try:
+        b = psutil.sensors_battery()   # None on any desktop with no battery
+        if b is not None:
+            stats["battery_pct"]     = round(b.percent, 1)
+            stats["battery_plugged"] = bool(b.power_plugged)
+    except Exception:
+        pass   # not present on this platform (e.g. AttributeError on Windows)
+    try:
+        temps = psutil.sensors_temperatures()   # AttributeError on Windows entirely
+        if temps:
+            for entries in temps.values():
+                if entries:
+                    stats["cpu_temp_c"] = round(entries[0].current, 1)
+                    break
+    except Exception:
+        pass   # not present on this platform
+    return stats
 
 
 class _DeviceListener:
@@ -117,6 +170,8 @@ class LanMesh:
         self._paired     = {}     # device_id -> {"name", "secret", "paired_at"}
         self._registry   = {}     # device_id -> {"name","ip","port","last_seen"}
         self._name_to_id = {}     # zeroconf service name -> device_id (for remove_service)
+        self._telemetry  = {}     # device_id -> {ram/cpu/battery/temp..., "received_at"}
+        self._own_telemetry = None   # this device's own last self-collected stats
         self._lock       = threading.Lock()
 
         self._loop          = None
@@ -226,7 +281,47 @@ class LanMesh:
                          self.mesh_port, self.device_name, self.device_id)
             self._ready.set()
             self._loop.call_later(SWEEP_INTERVAL_SECS, self._sweep_stale)
+            asyncio.create_task(self._telemetry_loop())
             await asyncio.Future()   # run forever, until stop() cancels the loop
+
+    async def _telemetry_loop(self):
+        """Every TELEMETRY_INTERVAL_SECS: collect our own stats and push them to
+        every currently-online paired peer, for the dashboard. Fire-and-forget
+        per peer -- a send failing to one offline/unreachable peer must not
+        block or skip the others."""
+        while True:
+            try:
+                stats = await self._loop.run_in_executor(None, _collect_telemetry)
+                self._own_telemetry = {**stats, "received_at": time.time()}
+                peers = [d for d in self.list_devices() if d.get("paired") and d.get("ip")]
+                for dev in peers:
+                    asyncio.create_task(self._send_telemetry_to(dev, stats))
+            except Exception as e:
+                logging.debug("lan_mesh: telemetry loop error: %s", e)
+            await asyncio.sleep(TELEMETRY_INTERVAL_SECS)
+
+    async def _send_telemetry_to(self, dev: dict, stats: dict):
+        try:
+            uri = f"ws://{dev['ip']}:{dev['port']}"
+            async with websockets.connect(uri, open_timeout=4) as ws:
+                await ws.send(json.dumps({
+                    "type": "telemetry", "sender_id": self.device_id,
+                    "sender_name": self.device_name, "stats": stats,
+                }))
+        except Exception as e:
+            logging.debug("lan_mesh: telemetry push to %s failed: %s", dev.get("name"), e)
+
+    def get_telemetry(self, device_id: str):
+        """Latest stats we've received FROM a paired peer, or None if we
+        haven't heard from them yet (e.g. they just came online)."""
+        with self._lock:
+            t = self._telemetry.get(device_id)
+            return dict(t) if t else None
+
+    def get_own_telemetry(self):
+        """This device's own last self-collected stats, or None before the
+        first telemetry cycle has run."""
+        return dict(self._own_telemetry) if self._own_telemetry else None
 
     def _advertise(self):
         try:
@@ -400,20 +495,36 @@ class LanMesh:
         """Send a task to a paired device. Never raises -- always a spoken string."""
         if self._loop is None:
             self.start()
+        t0 = time.time()
         dev = self._resolve_target(target)
         if not dev:
-            return f"I don't know a device called {target}."
+            result = f"I don't know a device called {target}."
+            task_history.record(self.device_id, self.device_name, None, target,
+                                intent, params, result, time.time() - t0)
+            return result
         if dev["device_id"] not in self._paired:
-            return f"{dev['name']} isn't paired with this device yet."
+            result = f"{dev['name']} isn't paired with this device yet."
+            task_history.record(self.device_id, self.device_name,
+                                dev["device_id"], dev["name"], intent, params,
+                                result, time.time() - t0)
+            return result
         if not dev.get("ip"):
-            return f"{dev['name']} looks offline right now."
+            result = f"{dev['name']} looks offline right now."
+            task_history.record(self.device_id, self.device_name,
+                                dev["device_id"], dev["name"], intent, params,
+                                result, time.time() - t0)
+            return result
 
         fut = asyncio.run_coroutine_threadsafe(
             self._dispatch_async(dev, intent, params, raw_text, timeout), self._loop)
         try:
-            return fut.result(timeout=timeout + 10)
+            result = fut.result(timeout=timeout + 10)
         except Exception as e:
-            return f"I couldn't reach {dev['name']}: {str(e)[:120]}"
+            result = f"I couldn't reach {dev['name']}: {str(e)[:120]}"
+        task_history.record(self.device_id, self.device_name,
+                            dev["device_id"], dev["name"], intent, params,
+                            result, time.time() - t0)
+        return result
 
     async def _dispatch_async(self, dev, intent, params, raw_text, timeout):
         secret = self._paired[dev["device_id"]]["secret"].encode()
@@ -450,6 +561,8 @@ class LanMesh:
                 reply = await self._handle_dispatch(msg)
             elif msg.get("type") == "pair_request":
                 reply = self._handle_pair_request(msg)
+            elif msg.get("type") == "telemetry":
+                reply = self._handle_telemetry(msg)
             else:
                 reply = {"ok": False, "error": "UNKNOWN_TYPE"}
         except Exception as e:
@@ -473,6 +586,22 @@ class LanMesh:
         return {"type": "pair_response", "ok": True,
                 "target_id": self.device_id, "target_name": self.device_name, "secret": secret}
 
+    def _handle_telemetry(self, msg: dict) -> dict:
+        """Cache a paired peer's self-reported stats. Only accepted from
+        currently-paired senders -- not security-critical the way payment
+        dispatch is, but there's no reason to let a random LAN device feed us
+        fabricated stats for the dashboard either."""
+        sender_id = msg.get("sender_id", "")
+        if sender_id not in self._paired:
+            return {"ok": False, "error": "UNPAIRED"}
+        with self._lock:
+            self._telemetry[sender_id] = {
+                **msg.get("stats", {}),
+                "name": self._paired[sender_id].get("name", "?"),
+                "received_at": time.time(),
+            }
+        return {"ok": True}
+
     async def _handle_dispatch(self, msg: dict) -> dict:
         sender_id = msg.get("sender_id", "")
         peer = self._paired.get(sender_id)
@@ -495,7 +624,10 @@ class LanMesh:
             return {"type": "dispatch_result", "ok": False, "error": "BAD_HMAC"}
 
         logging.info("lan_mesh: dispatch from %s: intent=%s params=%s", peer["name"], intent, params)
+        t0 = time.time()
         result = await self._execute_remote(intent, params, raw_text)
+        task_history.record(sender_id, peer["name"], self.device_id, self.device_name,
+                            intent, params, result, time.time() - t0)
         return {"type": "dispatch_result", "ok": True, "result": result, "error": None}
 
     async def _execute_remote(self, intent: str, params: dict, raw_text):

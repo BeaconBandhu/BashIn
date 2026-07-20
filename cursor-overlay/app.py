@@ -30,6 +30,8 @@ from execute  import run_step
 import agents
 from chrome_bridge import BRIDGE
 import lan_mesh
+import task_history
+import dashboard
 
 
 class App:
@@ -165,6 +167,7 @@ class App:
         self._devices_menu = m.addMenu("Devices")      # rebuilt by _refresh_devices_menu()
         m.addAction("Pair New Device...",              self._pair_new_device)
         m.addAction("Enter Pairing Code...",           self._enter_pairing_code)
+        m.addAction("Open Dashboard...",               self._open_dashboard)
         m.addSeparator()
         m.addAction("Remove from startup",             unregister)
         m.addAction("Quit",                            self._quit)
@@ -187,6 +190,9 @@ class App:
             state = "online" if online else "offline"
             a = self._devices_menu.addAction(f"{dot} {d['name']} ({state})")
             a.setEnabled(False)
+
+    def _open_dashboard(self):
+        dashboard.open_dashboard()
 
     def _manual_refresh_devices(self):
         """Force a fresh mDNS query burst (instead of waiting on the 3s poll
@@ -471,7 +477,13 @@ class App:
                 agent_result = lan_mesh.MESH.dispatch(target_id, intent, params,
                                                       raw_text=text, timeout=45)
             elif intent != "general":
+                t0 = time.monotonic()
                 agent_result = agents.execute_intent(intent, params, client, raw_text=text)
+                # Local execution (no remote dispatch) -- record source=target=self,
+                # so the dashboard's per-device task list includes local tasks too.
+                task_history.record(lan_mesh.MESH.device_id, lan_mesh.MESH.device_name,
+                                    lan_mesh.MESH.device_id, lan_mesh.MESH.device_name,
+                                    intent, params, agent_result, time.monotonic() - t0)
             else:
                 agent_result = None
             if agent_result is not None:
