@@ -23,6 +23,19 @@ _MUTEX = kernel32.CreateMutexW(None, True, "CursorOverlay_SingleInstance")
 if kernel32.GetLastError() == 183:          # ERROR_ALREADY_EXISTS
     sys.exit(0)
 
+# Windows groups/caches taskbar icons by process identity; a plain pythonw.exe
+# process is otherwise treated as "just Python" and can show a generic/cached
+# icon instead of a window's own setWindowIcon(), even when that's set
+# correctly. Declaring an explicit AppUserModelID tells Windows this process is
+# its own distinct app, BEFORE any window is created (must run early, once).
+if sys.platform == "win32":
+    try:
+        import ctypes
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
+            "BeaconBandhu.BashIn.Overlay")
+    except Exception:
+        pass
+
 # ── Run ────────────────────────────────────────────────────────────────────────
 from app import App
 

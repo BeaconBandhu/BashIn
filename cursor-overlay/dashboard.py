@@ -34,8 +34,13 @@ from PyQt6.QtGui     import (
 import lan_mesh
 import task_history
 
-BASE_DIR  = os.path.dirname(os.path.abspath(__file__))
-LOGO_PATH = os.path.join(BASE_DIR, "logo.png")
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+# .ico (multi-resolution: 16/24/32/48/64/128/256px) renders far more reliably
+# in the Windows taskbar than a single large PNG scaled at runtime; fall back
+# to the PNG if the .ico is ever missing (e.g. a fresh checkout mid-build).
+LOGO_PATH = os.path.join(BASE_DIR, "logo.ico")
+if not os.path.exists(LOGO_PATH):
+    LOGO_PATH = os.path.join(BASE_DIR, "logo.png")
 
 # ── Palette (matches the overlay's indigo/violet + adds HUD cyan) ─────────────
 BG_DEEP       = QColor(7, 9, 16)
