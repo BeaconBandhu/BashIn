@@ -19,20 +19,23 @@ Device dot positions on the globe are derived from a stable hash of each
 device_id (not Python's randomized hash()), so a given device stays in the
 same spot across restarts instead of jumping around.
 """
-import hashlib, math, time
+import hashlib, math, os, time
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QListWidget,
-    QListWidgetItem, QFrame, QScrollArea,
+    QListWidgetItem, QFrame, QScrollArea, QApplication,
 )
 from PyQt6.QtCore    import Qt, QTimer, pyqtSignal, QPointF, QRectF
 from PyQt6.QtGui     import (
     QPainter, QPen, QColor, QBrush, QFont, QRadialGradient,
-    QConicalGradient, QLinearGradient,
+    QConicalGradient, QLinearGradient, QIcon,
 )
 
 import lan_mesh
 import task_history
+
+BASE_DIR  = os.path.dirname(os.path.abspath(__file__))
+LOGO_PATH = os.path.join(BASE_DIR, "logo.png")
 
 # ── Palette (matches the overlay's indigo/violet + adds HUD cyan) ─────────────
 BG_DEEP       = QColor(7, 9, 16)
@@ -289,6 +292,8 @@ class DashboardWindow(QWidget):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("BashIn — Device Mesh")
+        if os.path.exists(LOGO_PATH):
+            self.setWindowIcon(QIcon(LOGO_PATH))
         self.resize(1000, 600)
         self._selected_id = None
         self._last_tick = time.monotonic()
@@ -520,6 +525,9 @@ _window = None
 def open_dashboard():
     """Singleton: reuse the existing window if already open, else create one."""
     global _window
+    app = QApplication.instance()
+    if app is not None and os.path.exists(LOGO_PATH) and app.windowIcon().isNull():
+        app.setWindowIcon(QIcon(LOGO_PATH))   # helps Windows taskbar/alt-tab grouping
     if _window is None or not _window.isVisible():
         _window = DashboardWindow()
     _window.show()
