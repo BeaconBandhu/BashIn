@@ -32,6 +32,20 @@ from chrome_bridge import BRIDGE
 import lan_mesh
 import task_history
 import dashboard
+import status_state
+import notch
+
+_STATE_NAMES = {IDLE: "IDLE", LISTENING: "LISTENING", PROCESSING: "PROCESSING",
+               SPEAKING: "SPEAKING", GUIDING: "GUIDING"}
+
+# Friendly in-progress labels for the notch's "current task" line -- keyed by
+# agents.detect_intent()'s intent names.
+_INTENT_LABELS = {
+    "spotify":  "Playing on Spotify",
+    "swiggy":   "Ordering on Swiggy Instamart",
+    "calendar": "Adding to Google Calendar",
+    "form":     "Filling out a form",
+}
 
 
 class App:
@@ -131,6 +145,19 @@ class App:
             lan_mesh.MESH.start()
         except Exception as e:
             logging.warning("lan_mesh.MESH.start failed: %s", e)
+
+        # Island-notch control panel: peeks from top-center, click to expand.
+        try:
+            self.notch = notch.NotchWidget(
+                get_conv_state=lambda: _STATE_NAMES.get(self.conv_state, "IDLE"),
+                on_open_dashboard=self._open_dashboard,
+                on_pair_new_device=self._pair_new_device,
+                on_enter_pairing_code=self._enter_pairing_code,
+            )
+            self.notch.show()
+        except Exception as e:
+            logging.warning("notch widget failed to start: %s", e)
+
         threading.Thread(target=self._hotkey_loop, daemon=True).start()
         if not registered():
             register()
@@ -473,6 +500,15 @@ class App:
             logging.info("_process: intent=%s target_device=%s (paired devices=%s)",
                         intent, target_id,
                         [d["name"] for d in lan_mesh.MESH.list_devices() if d.get("paired")])
+
+            if intent != "general":
+                target_name = None
+                if target_id:
+                    target_name = next((d["name"] for d in lan_mesh.MESH.list_devices()
+                                        if d["device_id"] == target_id), None)
+                where = f" on {target_name}" if target_name else ""
+                status_state.set_status(f"{_INTENT_LABELS.get(intent, intent)}{where}…", done=False)
+
             if target_id:
                 agent_result = lan_mesh.MESH.dispatch(target_id, intent, params,
                                                       raw_text=text, timeout=45)
@@ -486,6 +522,10 @@ class App:
                                     intent, params, agent_result, time.monotonic() - t0)
             else:
                 agent_result = None
+
+            if intent != "general":
+                status_state.set_status(agent_result or "Done", done=True)
+
             if agent_result is not None:
                 self._conv_history.append({"role": "user",      "content": text})
                 self._conv_history.append({"role": "assistant", "content": agent_result})
